@@ -1,0 +1,438 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#0A1628"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <!-- ── STATUS BAR ── -->
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:background="#111E35" android:orientation="horizontal"
+            android:padding="10dp" android:gravity="center_vertical">
+            <TextView android:id="@+id/tvStatus" android:layout_width="0dp"
+                android:layout_height="wrap_content" android:layout_weight="1"
+                android:text="Connecting…" android:textColor="#CCFFFFFF"
+                android:textSize="13sp" android:fontFamily="monospace"/>
+            <TextView android:id="@+id/tvDeviceName" android:layout_width="wrap_content"
+                android:layout_height="wrap_content" android:text="—"
+                android:textColor="#14FFEC" android:textSize="13sp" android:fontFamily="monospace"/>
+        </LinearLayout>
+
+        <!-- ── MODE INFO BAR (read-only) ── -->
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:background="#0D1A2E" android:orientation="horizontal"
+            android:paddingHorizontal="12dp" android:paddingVertical="6dp"
+            android:gravity="center_vertical">
+            <TextView android:id="@+id/tvModeLabel" android:layout_width="wrap_content"
+                android:layout_height="wrap_content" android:text="ESC"
+                android:textSize="14sp" android:textStyle="bold" android:textColor="#14FFEC"
+                android:fontFamily="monospace" android:layout_marginEnd="10dp"/>
+            <TextView android:id="@+id/tvModeHint" android:layout_width="0dp"
+                android:layout_height="wrap_content" android:layout_weight="1"
+                android:text="ESC · 50Hz · 1000–2000µs · stop=1000"
+                android:textColor="#66AABBCC" android:textSize="11sp" android:fontFamily="monospace"/>
+        </LinearLayout>
+
+        <!-- ── CONNECTING ── -->
+        <LinearLayout android:id="@+id/layoutConnecting"
+            android:layout_width="match_parent" android:layout_height="200dp"
+            android:orientation="vertical" android:gravity="center" android:visibility="visible">
+            <ProgressBar android:layout_width="44dp" android:layout_height="44dp"
+                android:indeterminateTint="#14FFEC"/>
+            <TextView android:layout_marginTop="12dp" android:layout_width="wrap_content"
+                android:layout_height="wrap_content" android:text="Connecting to AC6328…"
+                android:textColor="#88AABBCC" android:textSize="14sp"/>
+        </LinearLayout>
+
+        <!-- ══ CONTROLS ══ -->
+        <LinearLayout android:id="@+id/layoutControls"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="vertical" android:visibility="gone"
+            android:paddingTop="8dp">
+
+            <!-- ── GPS CARD ── -->
+            <androidx.cardview.widget.CardView android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:layout_marginHorizontal="8dp"
+                android:layout_marginBottom="4dp" app:cardBackgroundColor="#0D1525"
+                app:cardCornerRadius="10dp">
+
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:padding="10dp">
+
+                    <!-- LEFT: Compass rose -->
+                    <com.escbleapp.CompassView android:id="@+id/compassView"
+                        android:layout_width="88dp" android:layout_height="88dp"
+                        android:layout_marginEnd="10dp" android:layout_gravity="center_vertical"/>
+
+                    <!-- CENTRE: Speed + heading + source -->
+                    <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:orientation="vertical"
+                        android:layout_gravity="center_vertical">
+
+                        <!-- Speed row: number + unit button on same baseline -->
+                        <LinearLayout android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="horizontal" android:gravity="bottom">
+
+                            <TextView android:id="@+id/tvSpeed"
+                                android:layout_width="wrap_content" android:layout_height="wrap_content"
+                                android:text="—" android:textColor="#14FFEC"
+                                android:textSize="40sp" android:textStyle="bold"
+                                android:fontFamily="monospace" android:includeFontPadding="false"/>
+
+                            <!-- Unit toggle — sits at baseline of speed number -->
+                            <TextView android:id="@+id/btnSpeedUnit"
+                                android:layout_width="wrap_content" android:layout_height="wrap_content"
+                                android:text="kt" android:textSize="14sp" android:textStyle="bold"
+                                android:textColor="#0D7377" android:fontFamily="monospace"
+                                android:layout_marginStart="6dp" android:layout_marginBottom="6dp"
+                                android:paddingHorizontal="6dp" android:paddingVertical="2dp"
+                                android:background="@android:color/transparent"/>
+                        </LinearLayout>
+
+                        <!-- Heading -->
+                        <LinearLayout android:layout_width="match_parent"
+                            android:layout_height="wrap_content" android:orientation="horizontal"
+                            android:gravity="center_vertical" android:layout_marginTop="0dp">
+                            <TextView android:id="@+id/tvHeading"
+                                android:layout_width="wrap_content" android:layout_height="wrap_content"
+                                android:text="—°" android:textColor="#88AABBCC"
+                                android:textSize="17sp" android:fontFamily="monospace"/>
+                            <TextView android:id="@+id/tvHeadingCardinal"
+                                android:layout_width="wrap_content" android:layout_height="wrap_content"
+                                android:text="" android:textColor="#FFB300"
+                                android:textSize="17sp" android:textStyle="bold"
+                                android:fontFamily="monospace" android:layout_marginStart="6dp"/>
+                        </LinearLayout>
+
+                        <!-- Source + sats + toggle -->
+                        <LinearLayout android:layout_width="match_parent"
+                            android:layout_height="wrap_content" android:orientation="horizontal"
+                            android:gravity="center_vertical" android:layout_marginTop="4dp">
+                            <TextView android:id="@+id/tvGpsSource"
+                                android:layout_width="wrap_content" android:layout_height="wrap_content"
+                                android:text="📱" android:textColor="#44AABBCC"
+                                android:textSize="12sp"/>
+                            <TextView android:id="@+id/tvGpsSats"
+                                android:layout_width="wrap_content" android:layout_height="wrap_content"
+                                android:text="" android:textColor="#44AABBCC"
+                                android:textSize="11sp" android:fontFamily="monospace"
+                                android:layout_marginStart="4dp"/>
+                            <TextView android:id="@+id/btnGpsSource"
+                                android:layout_width="wrap_content" android:layout_height="wrap_content"
+                                android:text="BLE" android:textSize="11sp"
+                                android:textColor="#0D7377" android:fontFamily="monospace"
+                                android:background="@android:color/transparent"
+                                android:paddingHorizontal="6dp"
+                                android:layout_marginStart="4dp"/>
+                        </LinearLayout>
+                    </LinearLayout>
+
+                    <!-- RIGHT: Trip stats -->
+                    <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        android:orientation="vertical" android:gravity="center_horizontal"
+                        android:layout_gravity="center_vertical"
+                        android:layout_marginStart="10dp">
+
+                        <TextView android:text="TRIP" android:textColor="#44AABBCC"
+                            android:textSize="10sp" android:fontFamily="monospace"
+                            android:gravity="center"
+                            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+
+                        <TextView android:id="@+id/tvTripDistance"
+                            android:layout_width="wrap_content" android:layout_height="wrap_content"
+                            android:text="0.0" android:textColor="#FFB300"
+                            android:textSize="22sp" android:textStyle="bold"
+                            android:fontFamily="monospace" android:gravity="center"/>
+
+                        <TextView android:id="@+id/tvTripDistUnit"
+                            android:layout_width="wrap_content" android:layout_height="wrap_content"
+                            android:text="nm" android:textColor="#44FFB300"
+                            android:textSize="11sp" android:fontFamily="monospace"
+                            android:gravity="center"/>
+
+                        <View android:layout_width="match_parent" android:layout_height="1dp"
+                            android:background="#1A2E4A" android:layout_marginVertical="5dp"/>
+
+                        <TextView android:text="MAX" android:textColor="#44AABBCC"
+                            android:textSize="10sp" android:fontFamily="monospace"
+                            android:gravity="center"
+                            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+
+                        <TextView android:id="@+id/tvMaxSpeed"
+                            android:layout_width="wrap_content" android:layout_height="wrap_content"
+                            android:text="—" android:textColor="#FF8800"
+                            android:textSize="18sp" android:textStyle="bold"
+                            android:fontFamily="monospace" android:gravity="center"/>
+
+                        <!-- Reset trip stats -->
+                        <TextView android:id="@+id/btnResetTrip"
+                            android:layout_width="wrap_content" android:layout_height="wrap_content"
+                            android:text="RESET" android:textColor="#334455"
+                            android:textSize="10sp" android:fontFamily="monospace"
+                            android:paddingTop="6dp" android:gravity="center"
+                            android:background="@android:color/transparent"/>
+
+                    </LinearLayout>
+
+                </LinearLayout>
+            </androidx.cardview.widget.CardView>
+
+            <!-- ── SLIDERS ── -->
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="vertical" android:paddingHorizontal="12dp"
+                android:paddingBottom="8dp">
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical"
+                    android:layout_marginBottom="4dp">
+                    <TextView android:text="PORT" android:textColor="#14FFEC" android:textSize="11sp"
+                        android:fontFamily="monospace" android:layout_width="42dp"
+                        android:layout_height="wrap_content"/>
+                    <SeekBar android:id="@+id/seekPort" android:layout_width="0dp"
+                        android:layout_height="wrap_content" android:layout_weight="1"
+                        android:progressTint="#14FFEC" android:thumbTint="#14FFEC"/>
+                </LinearLayout>
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical">
+                    <TextView android:text="STBD" android:textColor="#FFB300" android:textSize="11sp"
+                        android:fontFamily="monospace" android:layout_width="42dp"
+                        android:layout_height="wrap_content"/>
+                    <SeekBar android:id="@+id/seekStarboard" android:layout_width="0dp"
+                        android:layout_height="wrap_content" android:layout_weight="1"
+                        android:progressTint="#FFB300" android:thumbTint="#FFB300"/>
+                </LinearLayout>
+            </LinearLayout>
+
+            <!-- ═══════════════════════════════════════════════════════════════
+                 THREE-COLUMN THROTTLE CONTROL
+                 PORT (left)  |  BOTH + STOP + SYNC (centre)  |  STBD (right)
+                 ═══════════════════════════════════════════════════════════════ -->
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="horizontal" android:paddingHorizontal="8dp"
+                android:paddingBottom="8dp">
+
+                <!-- ── PORT column ── -->
+                <LinearLayout android:id="@+id/layoutPortColumn"
+                    android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="1" android:orientation="vertical"
+                    android:gravity="center" android:layout_marginEnd="4dp">
+
+                    <TextView android:text="PORT" android:textColor="#14FFEC"
+                        android:textSize="13sp" android:textStyle="bold"
+                        android:fontFamily="monospace" android:gravity="center"
+                        android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:layout_marginBottom="4dp"/>
+
+                    <Button android:id="@+id/btnPortUp"
+                        android:layout_width="match_parent" android:layout_height="100dp"
+                        android:text="▲" android:textSize="36sp" android:textStyle="bold"
+                        android:backgroundTint="#0D4A3A" android:textColor="#14FFEC"
+                        style="@style/Widget.MaterialComponents.Button"/>
+
+                    <TextView android:id="@+id/tvPortBig2"
+                        android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:text="0%" android:textColor="#14FFEC"
+                        android:textSize="42sp" android:textStyle="bold"
+                        android:fontFamily="monospace" android:gravity="center"
+                        android:paddingVertical="8dp"/>
+
+                    <Button android:id="@+id/btnPortDown"
+                        android:layout_width="match_parent" android:layout_height="100dp"
+                        android:text="▼" android:textSize="36sp"
+                        android:backgroundTint="#1A2E4A" android:textColor="#6614FFEC"
+                        style="@style/Widget.MaterialComponents.Button"/>
+                </LinearLayout>
+
+                <!-- ── CENTRE column: BOTH + STOP + SYNC ── -->
+                <LinearLayout android:layout_width="72dp" android:layout_height="wrap_content"
+                    android:orientation="vertical" android:gravity="center">
+
+                    <!-- BOTH UP -->
+                    <Button android:id="@+id/btnBothUp"
+                        android:layout_width="match_parent" android:layout_height="64dp"
+                        android:text="⬆" android:textSize="22sp" android:textStyle="bold"
+                        android:backgroundTint="#1A3A2A" android:textColor="#88FFCC88"
+                        android:layout_marginBottom="4dp"
+                        style="@style/Widget.MaterialComponents.Button"/>
+
+                    <!-- STOP -->
+                    <Button android:id="@+id/btnStop"
+                        android:layout_width="match_parent" android:layout_height="64dp"
+                        android:text="STOP" android:textSize="12sp" android:textStyle="bold"
+                        android:backgroundTint="#CC2200" android:textColor="#FFFFFF"
+                        android:layout_marginVertical="4dp"
+                        style="@style/Widget.MaterialComponents.Button"/>
+
+                    <!-- BOTH DOWN -->
+                    <Button android:id="@+id/btnBothDown"
+                        android:layout_width="match_parent" android:layout_height="64dp"
+                        android:text="⬇" android:textSize="22sp"
+                        android:backgroundTint="#1A2030" android:textColor="#66AABBCC"
+                        android:layout_marginTop="4dp"
+                        style="@style/Widget.MaterialComponents.Button"/>
+
+                    <!-- SYNC toggle -->
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/switchSync"
+                        android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        android:layout_marginTop="10dp" android:checked="false"
+                        app:thumbTint="#14FFEC" app:trackTint="#1A2E4A"/>
+                    <TextView android:id="@+id/tvSyncLabel"
+                        android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        android:text="Sync" android:textColor="#44AABBCC"
+                        android:textSize="10sp" android:fontFamily="monospace"
+                        android:gravity="center"/>
+                </LinearLayout>
+
+                <!-- ── STBD column ── -->
+                <LinearLayout android:id="@+id/layoutStbdColumn"
+                    android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="1" android:orientation="vertical"
+                    android:gravity="center" android:layout_marginStart="4dp">
+
+                    <TextView android:text="STBD" android:textColor="#FFB300"
+                        android:textSize="13sp" android:textStyle="bold"
+                        android:fontFamily="monospace" android:gravity="center"
+                        android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:layout_marginBottom="4dp"/>
+
+                    <Button android:id="@+id/btnStbdUp"
+                        android:layout_width="match_parent" android:layout_height="100dp"
+                        android:text="▲" android:textSize="36sp" android:textStyle="bold"
+                        android:backgroundTint="#3A2E00" android:textColor="#FFB300"
+                        style="@style/Widget.MaterialComponents.Button"/>
+
+                    <TextView android:id="@+id/tvStbdBig2"
+                        android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:text="0%" android:textColor="#FFB300"
+                        android:textSize="42sp" android:textStyle="bold"
+                        android:fontFamily="monospace" android:gravity="center"
+                        android:paddingVertical="8dp"/>
+
+                    <Button android:id="@+id/btnStbdDown"
+                        android:layout_width="match_parent" android:layout_height="100dp"
+                        android:text="▼" android:textSize="36sp"
+                        android:backgroundTint="#1A2E4A" android:textColor="#66FFB300"
+                        style="@style/Widget.MaterialComponents.Button"/>
+                </LinearLayout>
+            </LinearLayout>
+
+            <!-- ── BOTTOM: ARM | MAX ── -->
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="horizontal" android:paddingHorizontal="12dp"
+                android:paddingBottom="6dp">
+                <Button android:id="@+id/btnArm"
+                    android:layout_width="0dp" android:layout_height="44dp"
+                    android:layout_weight="1" android:text="ARM" android:textSize="13sp"
+                    android:layout_marginEnd="6dp" android:backgroundTint="#1A2E4A"
+                    android:textColor="#14FFEC"
+                    style="@style/Widget.MaterialComponents.Button"/>
+                <Button android:id="@+id/btnFullFwd"
+                    android:layout_width="0dp" android:layout_height="44dp"
+                    android:layout_weight="1" android:text="MAX ▲" android:textSize="13sp"
+                    android:layout_marginStart="6dp" android:backgroundTint="#1A3A1A"
+                    android:textColor="#44FF44"
+                    style="@style/Widget.MaterialComponents.Button"/>
+            </LinearLayout>
+
+            <!-- ── FEEDBACK PANEL ── -->
+            <androidx.cardview.widget.CardView android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:layout_marginHorizontal="12dp"
+                android:layout_marginBottom="6dp" app:cardBackgroundColor="#080F1E"
+                app:cardCornerRadius="10dp">
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="vertical" android:padding="10dp">
+
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:orientation="horizontal" android:gravity="center_vertical"
+                        android:layout_marginBottom="6dp">
+                        <TextView android:text="FEEDBACK" android:textColor="#14FFEC"
+                            android:textSize="11sp" android:fontFamily="monospace"
+                            android:layout_width="0dp" android:layout_height="wrap_content"
+                            android:layout_weight="1"/>
+                        <Button android:id="@+id/btnReadFeedback"
+                            android:layout_width="wrap_content" android:layout_height="30dp"
+                            android:text="Read ae10" android:textSize="11sp"
+                            android:backgroundTint="#0D7377" android:textColor="#FFFFFF"
+                            android:paddingHorizontal="10dp"
+                            style="@style/Widget.MaterialComponents.Button"/>
+                    </LinearLayout>
+
+                    <TextView android:text="BATTERY · ae10" android:textColor="#44AABBCC"
+                        android:textSize="10sp" android:fontFamily="monospace"
+                        android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:orientation="horizontal" android:gravity="center_vertical"
+                        android:layout_marginTop="4dp">
+                        <ProgressBar android:id="@+id/progressBattery"
+                            style="@style/Widget.AppCompat.ProgressBar.Horizontal"
+                            android:layout_width="0dp" android:layout_height="10dp"
+                            android:layout_weight="1" android:max="100" android:progress="0"
+                            android:progressTint="#14FFEC" android:layout_marginEnd="8dp"/>
+                        <TextView android:id="@+id/tvBatteryPct" android:layout_width="36dp"
+                            android:layout_height="wrap_content" android:text="—%"
+                            android:textColor="#14FFEC" android:textSize="13sp"
+                            android:fontFamily="monospace"/>
+                        <TextView android:id="@+id/tvBatteryMv" android:layout_width="wrap_content"
+                            android:layout_height="wrap_content" android:text="—mV"
+                            android:textColor="#88AABBCC" android:textSize="12sp"
+                            android:fontFamily="monospace" android:layout_marginStart="6dp"/>
+                        <TextView android:id="@+id/tvUptime" android:layout_width="wrap_content"
+                            android:layout_height="wrap_content" android:text=""
+                            android:textColor="#44AABBCC" android:textSize="11sp"
+                            android:fontFamily="monospace" android:layout_marginStart="8dp"/>
+                    </LinearLayout>
+                    <TextView android:id="@+id/tvAe10Raw" android:layout_width="match_parent"
+                        android:layout_height="wrap_content" android:text="ae10: —"
+                        android:textColor="#223344" android:textSize="10sp"
+                        android:fontFamily="monospace" android:layout_marginTop="2dp"/>
+
+                    <View android:layout_width="match_parent" android:layout_height="1dp"
+                        android:background="#1A2E4A" android:layout_marginVertical="8dp"/>
+
+                    <TextView android:text="ECHO · ae02" android:textColor="#44AABBCC"
+                        android:textSize="10sp" android:fontFamily="monospace"
+                        android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                    <TextView android:id="@+id/tvPwmDrift" android:layout_width="match_parent"
+                        android:layout_height="wrap_content" android:text="Waiting…"
+                        android:textColor="#44AABBCC" android:textSize="11sp"
+                        android:fontFamily="monospace" android:layout_marginTop="4dp"/>
+                    <TextView android:id="@+id/tvAe04Raw" android:layout_width="match_parent"
+                        android:layout_height="wrap_content" android:text="ae02: —"
+                        android:textColor="#223344" android:textSize="10sp"
+                        android:fontFamily="monospace" android:layout_marginTop="2dp"/>
+
+                    <View android:layout_width="match_parent" android:layout_height="1dp"
+                        android:background="#1A2E4A" android:layout_marginVertical="8dp"/>
+
+                    <TextView android:text="TX · ae03" android:textColor="#44AABBCC"
+                        android:textSize="10sp" android:fontFamily="monospace"
+                        android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                    <TextView android:id="@+id/tvTxPacket" android:layout_width="match_parent"
+                        android:layout_height="wrap_content" android:text="—"
+                        android:textColor="#14FFEC" android:textSize="11sp"
+                        android:fontFamily="monospace" android:layout_marginTop="4dp"/>
+                    <TextView android:id="@+id/tvAe02" android:layout_width="match_parent"
+                        android:layout_height="wrap_content" android:text="ae02: —"
+                        android:textColor="#88FFB300" android:textSize="10sp"
+                        android:fontFamily="monospace" android:layout_marginTop="2dp"/>
+                </LinearLayout>
+            </androidx.cardview.widget.CardView>
+
+            <Button android:id="@+id/btnDisconnect"
+                android:layout_width="match_parent" android:layout_height="40dp"
+                android:layout_marginHorizontal="12dp" android:layout_marginBottom="16dp"
+                android:text="Disconnect" android:textSize="12sp"
+                android:backgroundTint="#1A2030" android:textColor="#88AABBCC"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"/>
+
+        </LinearLayout>
+    </LinearLayout>
+</ScrollView>
