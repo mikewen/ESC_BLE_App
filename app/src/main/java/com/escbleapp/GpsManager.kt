@@ -233,7 +233,7 @@ class GpsManager(private val context: Context) {
             source     = Source.BLE,
             speedKnots = speedKt,
             headingDeg = if (heading != null && speedKt >= MIN_SPEED_FOR_HEADING_KT) heading
-            else currentData.headingDeg,
+                         else currentData.headingDeg,
             hasHeading = heading != null && speedKt >= MIN_SPEED_FOR_HEADING_KT,
             hasFix     = hasFix,
             latDeg     = lat ?: currentData.latDeg,

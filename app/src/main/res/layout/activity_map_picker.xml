@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#0A1628">
+
+    <!-- Full-screen map -->
+    <org.osmdroid.views.MapView
+        android:id="@+id/mapView"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toTopOf="@id/bottomBar"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"/>
+
+    <!-- Crosshair overlay (tap-to-pick uses map centre) -->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="+"
+        android:textColor="#FF000000"
+        android:textSize="40sp"
+        android:textStyle="bold"
+        android:alpha="0.5"
+        app:layout_constraintTop_toTopOf="@id/mapView"
+        app:layout_constraintBottom_toTopOf="@id/bottomBar"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"/>
+
+    <!-- Bottom bar -->
+    <LinearLayout
+        android:id="@+id/bottomBar"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="#EE0A1628"
+        android:padding="12dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <!-- Target info -->
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="horizontal" android:gravity="center_vertical"
+            android:layout_marginBottom="8dp">
+
+            <TextView android:id="@+id/tvMapInstruction"
+                android:layout_width="0dp" android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Tap map to pick destination"
+                android:textColor="#88AABBCC" android:textSize="13sp"
+                android:fontFamily="monospace"/>
+
+            <TextView android:id="@+id/tvMapBearing"
+                android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:text="" android:textColor="#14FFEC"
+                android:textSize="18sp" android:textStyle="bold"
+                android:fontFamily="monospace"/>
+        </LinearLayout>
+
+        <!-- Lat/lon of picked point -->
+        <TextView android:id="@+id/tvMapCoords"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:text="" android:textColor="#44AABBCC"
+            android:textSize="11sp" android:fontFamily="monospace"
+            android:layout_marginBottom="8dp"/>
+
+        <!-- Confirm / Cancel -->
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="horizontal">
+
+            <Button android:id="@+id/btnMapCancel"
+                android:layout_width="0dp" android:layout_height="44dp"
+                android:layout_weight="1" android:text="CANCEL"
+                android:textSize="13sp" android:backgroundTint="#1A2030"
+                android:textColor="#88AABBCC" android:layout_marginEnd="6dp"
+                style="@style/Widget.MaterialComponents.Button"/>
+
+            <Button android:id="@+id/btnMapConfirm"
+                android:layout_width="0dp" android:layout_height="44dp"
+                android:layout_weight="1" android:text="SET TARGET →"
+                android:textSize="13sp" android:backgroundTint="#0D4A3A"
+                android:textColor="#14FFEC" android:layout_marginStart="6dp"
+                android:enabled="false"
+                style="@style/Widget.MaterialComponents.Button"/>
+        </LinearLayout>
+    </LinearLayout>
+
+</androidx.constraintlayout.widget.ConstraintLayout>

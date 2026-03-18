@@ -1,0 +1,443 @@
+package com.escbleapp
+
+import android.annotation.SuppressLint
+import android.bluetooth.BluetoothDevice
+import android.content.Context
+import android.content.Intent
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.os.VibrationEffect
+import android.os.VibratorManager
+import android.os.Vibrator
+import android.view.MotionEvent
+import android.widget.SeekBar
+import android.widget.Toast
+import androidx.activity.addCallback
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AppCompatActivity
+import com.escbleapp.databinding.ActivityAutopilotBinding
+import no.nordicsemi.android.ble.observer.ConnectionObserver
+import kotlin.math.*
+
+/**
+ * AutopilotActivity — Hold Course with differential thrust.
+ *
+ * Works with AC6329C which provides heading from GPS/GNSS or 9DoF IMU via ae02.
+ * Falls back to phone GPS heading if BLE heading unavailable.
+ *
+ * Algorithm: Simple proportional controller
+ *   heading_error = target - actual   (wrapped to ±180°)
+ *   differential  = error × Kp        (clamped to ±MAX_DIFF)
+ *   port_pct      = base_speed + differential   (if error > 0, turn right → port faster)
+ *   stbd_pct      = base_speed - differential
+ *
+ * User controls:
+ *   Course ±1°, ±10° buttons
+ *   Speed ▲▼ hold buttons + slider (0–100%)
+ *   ENGAGE / DISENGAGE
+ *   SET CURRENT HEADING AS TARGET
+ */
+class AutopilotActivity : AppCompatActivity() {
+
+    private lateinit var binding: ActivityAutopilotBinding
+    private lateinit var bleManager: AC6328BleManager
+    private lateinit var gpsManager: GpsManager
+    private val handler = Handler(Looper.getMainLooper())
+
+    // ── Mode ──────────────────────────────────────────────────────────────────
+    private var escMode = true
+
+    // ── Autopilot state ───────────────────────────────────────────────────────
+    private var engaged       = false
+    private var targetHeading = 0f    // degrees 0–360
+    private var baseSpeedPct  = 0     // 0–100 (both motors at this when on course)
+    private var actualHeading = 0f
+    private var hasHeading    = false
+
+    // ── PID (proportional only for now) ──────────────────────────────────────
+    private val Kp           = 0.8f   // proportional gain — tune to vessel
+    private val MAX_DIFF_PCT = 30     // max differential ±% between port and stbd
+
+    // ── Timing ────────────────────────────────────────────────────────────────
+    private val CONTROL_INTERVAL_MS = 200L   // 5 Hz control loop
+    private val HOLD_INTERVAL_MS    = 100L   // speed ramp tick
+    private var isConnected         = false
+
+    companion object {
+        const val EXTRA_DEVICE           = "extra_device"
+        const val EXTRA_DEVICE_NAME      = "extra_device_name"
+        const val EXTRA_ESC_MODE         = "extra_esc_mode"
+        const val EXTRA_INIT_SPEED_PCT   = "extra_init_speed_pct"
+    }
+
+    // Map picker result launcher
+    private val mapPickerLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == RESULT_OK) {
+            val data = result.data ?: return@registerForActivityResult
+            val bearing = data.getFloatExtra(MapPickerActivity.RESULT_TARGET_BEARING, 0f)
+            targetLat   = data.getDoubleExtra(MapPickerActivity.RESULT_TARGET_LAT, 0.0)
+            targetLon   = data.getDoubleExtra(MapPickerActivity.RESULT_TARGET_LON, 0.0)
+            hasWaypoint = true
+            targetHeading = bearing
+            updateCourseDisplay()
+            showToast("Target set → %.0f°".format(bearing))
+        }
+    }
+
+    // Waypoint tracking
+    private var targetLat   = 0.0
+    private var targetLon   = 0.0
+    private var hasWaypoint = false
+
+    private val controlRunnable = object : Runnable {
+        override fun run() {
+            if (engaged && isConnected) {
+                runControlStep()
+                handler.postDelayed(this, CONTROL_INTERVAL_MS)
+            }
+        }
+    }
+
+    // ── Lifecycle ─────────────────────────────────────────────────────────────
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        binding = ActivityAutopilotBinding.inflate(layoutInflater)
+        setContentView(binding.root)
+
+        val device: BluetoothDevice = if (android.os.Build.VERSION.SDK_INT >= 33) {
+            intent.getParcelableExtra(EXTRA_DEVICE, BluetoothDevice::class.java)!!
+        } else {
+            @Suppress("DEPRECATION") intent.getParcelableExtra(EXTRA_DEVICE)!!
+        }
+        val deviceName  = intent.getStringExtra(EXTRA_DEVICE_NAME) ?: "AC6329C"
+        escMode         = intent.getBooleanExtra(EXTRA_ESC_MODE, true)
+        baseSpeedPct    = intent.getIntExtra(EXTRA_INIT_SPEED_PCT, 0)
+
+        binding.tvApDeviceName.text = deviceName
+
+        setupBleManager(device)
+        setupGps()
+        setupCourseButtons()
+        setupSpeedControls()
+        setupEngageButtons()
+        setupBackPress()
+
+        // Initialise speed display
+        updateSpeedDisplay()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        handler.removeCallbacksAndMessages(null)
+        disengage()
+        if (isConnected) { bleManager.stopMotors(); bleManager.disconnect().enqueue() }
+        gpsManager.stopPhoneGps()
+        bleManager.close()
+    }
+
+    // ── BLE ───────────────────────────────────────────────────────────────────
+
+    private fun setupBleManager(device: BluetoothDevice) {
+        bleManager = AC6328BleManager(this)
+
+        bleManager.setConnectionObserver(object : ConnectionObserver {
+            override fun onDeviceConnecting(d: BluetoothDevice)    = runOnUiThread { binding.tvApStatus.text = "✈ Connecting…" }
+            override fun onDeviceDisconnecting(d: BluetoothDevice) = runOnUiThread { binding.tvApStatus.text = "✈ Disconnecting…" }
+            override fun onDeviceReady(d: BluetoothDevice) {}
+            override fun onDeviceConnected(d: BluetoothDevice) = runOnUiThread {
+                isConnected = true
+                binding.tvApStatus.text = "✈ AUTOPILOT · STANDBY"
+                if (escMode) bleManager.setEscMode() else bleManager.setBldcMode()
+                bleManager.stopMotors()
+            }
+            override fun onDeviceFailedToConnect(d: BluetoothDevice, reason: Int) = runOnUiThread {
+                isConnected = false; binding.tvApStatus.text = "✈ Failed ($reason)"
+            }
+            override fun onDeviceDisconnected(d: BluetoothDevice, reason: Int) = runOnUiThread {
+                isConnected = false
+                disengage()
+                binding.tvApStatus.text = "✈ Disconnected"
+            }
+        })
+
+        // ae02 may carry NMEA from AC6329C GPS/9DoF
+        bleManager.onAe02Raw = { bytes -> gpsManager.feedAe02Bytes(bytes) }
+        bleManager.onError   = { msg  -> runOnUiThread { showToast(msg) } }
+        bleManager.connectToDevice(device)
+    }
+
+    // ── GPS ───────────────────────────────────────────────────────────────────
+
+    private fun setupGps() {
+        gpsManager = GpsManager(this)
+        gpsManager.onUpdate = { data -> runOnUiThread { onGpsUpdate(data) } }
+
+        if (gpsManager.hasLocationPermission()) gpsManager.startPhoneGps()
+    }
+
+    private fun onGpsUpdate(data: GpsManager.GpsData) {
+        if (!data.hasFix) return
+        actualHeading = data.headingDeg
+        hasHeading    = data.hasHeading
+
+        binding.apCompassView.headingDeg = actualHeading
+        binding.apCompassView.hasFix     = data.hasFix
+        binding.tvActualHeading.text     = if (data.hasHeading) "%.0f°".format(actualHeading) else "—°"
+        binding.tvApSpeed.text           = "%.1f kt".format(data.speedKnots)
+
+        // If waypoint mode: recalculate bearing-to-waypoint from current position
+        if (hasWaypoint && data.latDeg != 0.0) {
+            targetHeading = bearingTo(data.latDeg, data.lonDeg, targetLat, targetLon)
+            val distNm    = haversineNm(data.latDeg, data.lonDeg, targetLat, targetLon)
+            binding.tvCourseDisplay.text  = "%.0f°".format(targetHeading)
+            binding.tvCourseCardinal.text = "%.2f nm".format(distNm)
+            binding.tvTargetHeading.text  = "%.0f°".format(targetHeading)
+            if (engaged) binding.tvApStatus.text =
+                "✈ WAYPOINT  →  %.0f°  (%.2f nm)".format(targetHeading, distNm)
+        }
+
+        if (engaged && data.hasHeading) {
+            val err = headingError(targetHeading, actualHeading)
+            binding.tvHeadingError.text = "%+.0f°".format(err)
+        }
+    }
+
+    // ── Geo helpers (same as MapPickerActivity) ───────────────────────────────
+
+    private fun bearingTo(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Float {
+        val φ1 = Math.toRadians(lat1); val φ2 = Math.toRadians(lat2)
+        val Δλ = Math.toRadians(lon2 - lon1)
+        val y  = sin(Δλ) * cos(φ2)
+        val x  = cos(φ1) * sin(φ2) - sin(φ1) * cos(φ2) * cos(Δλ)
+        return ((Math.toDegrees(atan2(y, x)) + 360) % 360).toFloat()
+    }
+
+    private fun haversineNm(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+        val R = 3440.065
+        val dLat = Math.toRadians(lat2 - lat1)
+        val dLon = Math.toRadians(lon2 - lon1)
+        val a = sin(dLat/2).pow(2) +
+                cos(Math.toRadians(lat1)) * cos(Math.toRadians(lat2)) * sin(dLon/2).pow(2)
+        return R * 2 * asin(sqrt(a))
+    }
+
+    // ── Control loop ──────────────────────────────────────────────────────────
+
+    /**
+     * Proportional heading controller with differential thrust.
+     *
+     * heading_error > 0 → vessel is left of target → need to turn right
+     *   → increase PORT, reduce STBD
+     * heading_error < 0 → vessel is right of target → turn left
+     *   → reduce PORT, increase STBD
+     */
+    private fun runControlStep() {
+        if (!hasHeading || !isConnected) return
+
+        val error = headingError(targetHeading, actualHeading)
+        val diff  = (error * Kp).toInt().coerceIn(-MAX_DIFF_PCT, MAX_DIFF_PCT)
+
+        val portPct = (baseSpeedPct + diff).coerceIn(0, 100)
+        val stbdPct = (baseSpeedPct - diff).coerceIn(0, 100)
+
+        sendMotors(portPct, stbdPct)
+        updateMotorDisplay(portPct, stbdPct, error)
+    }
+
+    /** Heading error wrapped to ±180° */
+    private fun headingError(target: Float, actual: Float): Float {
+        var err = target - actual
+        while (err >  180f) err -= 360f
+        while (err < -180f) err += 360f
+        return err
+    }
+
+    private fun sendMotors(portPct: Int, stbdPct: Int) {
+        if (escMode) {
+            val portUs = 1000 + portPct * 10
+            val stbdUs = 1000 + stbdPct * 10
+            bleManager.sendEscPwm(portUs, stbdUs)
+        } else {
+            bleManager.sendBldc(portPct * 100, stbdPct * 100)
+        }
+    }
+
+    // ── Engage / Disengage ────────────────────────────────────────────────────
+
+    private fun engage() {
+        if (!isConnected) { showToast("Not connected"); return }
+        if (!hasHeading)  { showToast("No heading — waiting for GPS fix"); return }
+
+        engaged = true
+        binding.tvApStatus.text = "✈ ENGAGED  →  %.0f°".format(targetHeading)
+        binding.btnEngage.backgroundTintList =
+            android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#14FFEC"))
+        binding.btnEngage.setTextColor(android.graphics.Color.parseColor("#0A1628"))
+        vibrate(80)
+        handler.post(controlRunnable)
+    }
+
+    private fun disengage() {
+        engaged = false
+        handler.removeCallbacks(controlRunnable)
+        binding.tvApStatus.text = "✈ AUTOPILOT · STANDBY"
+        binding.btnEngage.backgroundTintList =
+            android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#0D4A3A"))
+        binding.btnEngage.setTextColor(android.graphics.Color.parseColor("#14FFEC"))
+        if (isConnected) bleManager.stopMotors()
+        updateMotorDisplay(0, 0, 0f)
+    }
+
+    private fun setupEngageButtons() {
+        binding.btnEngage.setOnClickListener    { engage() }
+        binding.btnDisengage.setOnClickListener { disengage(); vibrate(80) }
+
+        // HOLD COURSE — lock current GPS bearing as target
+        binding.btnSetCurrentCourse.setOnClickListener {
+            if (hasHeading) {
+                hasWaypoint   = false   // cancel waypoint mode
+                targetHeading = actualHeading
+                updateCourseDisplay()
+                showToast("Holding course %.0f°".format(targetHeading))
+            } else {
+                showToast("No GPS heading yet")
+            }
+        }
+
+        // PICK TARGET — open map picker
+        binding.btnPickTarget.setOnClickListener {
+            val gpsData = gpsManager.getCurrentData()
+            val intent  = Intent(this, MapPickerActivity::class.java).apply {
+                putExtra(MapPickerActivity.EXTRA_CURRENT_LAT,     gpsData.latDeg)
+                putExtra(MapPickerActivity.EXTRA_CURRENT_LON,     gpsData.lonDeg)
+                putExtra(MapPickerActivity.EXTRA_CURRENT_HEADING, actualHeading)
+            }
+            mapPickerLauncher.launch(intent)
+        }
+    }
+
+    // ── Course buttons ────────────────────────────────────────────────────────
+
+    private fun setupCourseButtons() {
+        binding.btnCourseM10.setOnClickListener { adjustCourse(-10f) }
+        binding.btnCourseM1.setOnClickListener  { adjustCourse(-1f)  }
+        binding.btnCourseP1.setOnClickListener  { adjustCourse(+1f)  }
+        binding.btnCourseP10.setOnClickListener { adjustCourse(+10f) }
+    }
+
+    private fun adjustCourse(delta: Float) {
+        targetHeading = (targetHeading + delta + 360f) % 360f
+        updateCourseDisplay()
+        if (engaged) binding.tvApStatus.text = "✈ ENGAGED  →  %.0f°".format(targetHeading)
+        vibrate(30)
+    }
+
+    private fun headingToCardinal(deg: Float): String = when {
+        deg < 22.5 || deg >= 337.5 -> "N"
+        deg < 67.5  -> "NE"
+        deg < 112.5 -> "E"
+        deg < 157.5 -> "SE"
+        deg < 202.5 -> "S"
+        deg < 247.5 -> "SW"
+        deg < 292.5 -> "W"
+        else        -> "NW"
+    }
+
+    @SuppressLint("SetTextI18n")
+    private fun updateCourseDisplay() {
+        binding.tvTargetHeading.text  = "%.0f°".format(targetHeading)
+        binding.tvCourseDisplay.text  = "%.0f°".format(targetHeading)
+        binding.tvCourseCardinal.text = headingToCardinal(targetHeading)
+        binding.apCompassView.invalidate()
+    }
+
+    // ── Speed controls ────────────────────────────────────────────────────────
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun setupSpeedControls() {
+        binding.seekApSpeed.max      = 100
+        binding.seekApSpeed.progress = baseSpeedPct
+
+        binding.seekApSpeed.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: SeekBar, p: Int, fromUser: Boolean) {
+                if (!fromUser) return
+                baseSpeedPct = p
+                updateSpeedDisplay()
+            }
+            override fun onStartTrackingTouch(sb: SeekBar) {}
+            override fun onStopTrackingTouch(sb: SeekBar) {}
+        })
+
+        // Hold ▲▼ to ramp speed
+        fun holdSpeed(btn: android.widget.Button, delta: Int) {
+            val ramp = object : Runnable {
+                override fun run() {
+                    baseSpeedPct = (baseSpeedPct + delta).coerceIn(0, 100)
+                    binding.seekApSpeed.progress = baseSpeedPct
+                    updateSpeedDisplay()
+                    handler.postDelayed(this, HOLD_INTERVAL_MS)
+                }
+            }
+            btn.setOnTouchListener { _, ev ->
+                when (ev.action) {
+                    MotionEvent.ACTION_DOWN -> { handler.post(ramp); true }
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                        handler.removeCallbacks(ramp); true
+                    }
+                    else -> false
+                }
+            }
+        }
+        holdSpeed(binding.btnSpeedUp,   +1)
+        holdSpeed(binding.btnSpeedDown, -1)
+    }
+
+    @SuppressLint("SetTextI18n")
+    private fun updateSpeedDisplay() {
+        binding.tvSpeedPct.text = "$baseSpeedPct%"
+    }
+
+    // ── Motor output display ──────────────────────────────────────────────────
+
+    @SuppressLint("SetTextI18n")
+    private fun updateMotorDisplay(portPct: Int, stbdPct: Int, headingErr: Float) {
+        binding.tvApPortPct.text       = "$portPct%"
+        binding.tvApStbdPct.text       = "$stbdPct%"
+        binding.apProgressPort.progress = portPct
+        binding.apProgressStbd.progress = stbdPct
+        binding.tvDifferential.text    = "⟷%+.0f°".format(headingErr)
+        binding.tvApTx.text            = "PORT:$portPct%  STBD:$stbdPct%  Δ=%+.1f°".format(headingErr)
+    }
+
+    // ── Utils ─────────────────────────────────────────────────────────────────
+
+    private fun showToast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+
+    private fun vibrate(ms: Long) {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            (getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager)
+                .defaultVibrator.vibrate(VibrationEffect.createOneShot(ms, VibrationEffect.DEFAULT_AMPLITUDE))
+        } else {
+            @Suppress("DEPRECATION")
+            val vib = getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+            if (android.os.Build.VERSION.SDK_INT >= 26)
+                vib.vibrate(VibrationEffect.createOneShot(ms, VibrationEffect.DEFAULT_AMPLITUDE))
+            else @Suppress("DEPRECATION") vib.vibrate(ms)
+        }
+    }
+
+    private fun setupBackPress() {
+        onBackPressedDispatcher.addCallback(this) {
+            disengage()
+            finish()
+        }
+        binding.btnApBack.setOnClickListener {
+            disengage()
+            finish()
+        }
+    }
+}

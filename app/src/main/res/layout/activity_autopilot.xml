@@ -1,0 +1,322 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#0A1628"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <!-- ── STATUS BAR ── -->
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:background="#111E35" android:orientation="horizontal"
+            android:padding="10dp" android:gravity="center_vertical">
+            <TextView android:id="@+id/tvApStatus"
+                android:layout_width="0dp" android:layout_height="wrap_content"
+                android:layout_weight="1" android:text="✈ AUTOPILOT · STANDBY"
+                android:textColor="#88CCFF" android:textSize="13sp" android:fontFamily="monospace"/>
+            <TextView android:id="@+id/tvApDeviceName"
+                android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:text="—" android:textColor="#14FFEC"
+                android:textSize="13sp" android:fontFamily="monospace"/>
+        </LinearLayout>
+
+        <!-- ── ENGAGE TOGGLE ── -->
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:background="#0D1A2E" android:orientation="horizontal"
+            android:paddingHorizontal="16dp" android:paddingVertical="10dp"
+            android:gravity="center_vertical">
+
+            <Button android:id="@+id/btnEngage"
+                android:layout_width="0dp" android:layout_height="52dp"
+                android:layout_weight="1" android:text="ENGAGE"
+                android:textSize="16sp" android:textStyle="bold"
+                android:backgroundTint="#0D4A3A" android:textColor="#14FFEC"
+                style="@style/Widget.MaterialComponents.Button"/>
+
+            <View android:layout_width="12dp" android:layout_height="1dp"/>
+
+            <Button android:id="@+id/btnDisengage"
+                android:layout_width="0dp" android:layout_height="52dp"
+                android:layout_weight="1" android:text="DISENGAGE"
+                android:textSize="16sp" android:textStyle="bold"
+                android:backgroundTint="#4A1A0D" android:textColor="#FF8888"
+                style="@style/Widget.MaterialComponents.Button"/>
+        </LinearLayout>
+
+        <!-- ── COMPASS + LIVE DATA ── -->
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="horizontal" android:padding="12dp">
+
+            <!-- Compass -->
+            <com.escbleapp.CompassView android:id="@+id/apCompassView"
+                android:layout_width="120dp" android:layout_height="120dp"
+                android:layout_marginEnd="16dp" android:layout_gravity="center_vertical"/>
+
+            <!-- Data column -->
+            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content"
+                android:layout_weight="1" android:orientation="vertical"
+                android:layout_gravity="center_vertical">
+
+                <!-- Target heading -->
+                <TextView android:text="TARGET" android:textColor="#44AABBCC"
+                    android:textSize="11sp" android:fontFamily="monospace"
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                <TextView android:id="@+id/tvTargetHeading"
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="—°" android:textColor="#88CCFF"
+                    android:textSize="40sp" android:textStyle="bold" android:fontFamily="monospace"
+                    android:includeFontPadding="false"/>
+
+                <!-- Actual heading -->
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical"
+                    android:layout_marginTop="4dp">
+                    <TextView android:text="ACTUAL " android:textColor="#44AABBCC"
+                        android:textSize="11sp" android:fontFamily="monospace"
+                        android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                    <TextView android:id="@+id/tvActualHeading"
+                        android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        android:text="—°" android:textColor="#88AABBCC"
+                        android:textSize="18sp" android:fontFamily="monospace"/>
+                    <TextView android:id="@+id/tvHeadingError"
+                        android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        android:text="" android:textColor="#FFB300"
+                        android:textSize="14sp" android:fontFamily="monospace"
+                        android:layout_marginStart="8dp"/>
+                </LinearLayout>
+
+                <!-- Speed -->
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical"
+                    android:layout_marginTop="2dp">
+                    <TextView android:text="SPEED " android:textColor="#44AABBCC"
+                        android:textSize="11sp" android:fontFamily="monospace"
+                        android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                    <TextView android:id="@+id/tvApSpeed"
+                        android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        android:text="—" android:textColor="#14FFEC"
+                        android:textSize="18sp" android:fontFamily="monospace"/>
+                </LinearLayout>
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- ── COURSE ADJUST ── -->
+        <androidx.cardview.widget.CardView android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:layout_marginHorizontal="12dp"
+            android:layout_marginBottom="8dp" app:cardBackgroundColor="#0D1525"
+            app:cardCornerRadius="10dp">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="vertical" android:padding="12dp">
+
+                <TextView android:text="COURSE ADJUST" android:textColor="#44AABBCC"
+                    android:textSize="11sp" android:fontFamily="monospace" android:letterSpacing="0.1"
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:layout_marginBottom="8dp"/>
+
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal">
+
+                    <Button android:id="@+id/btnCourseM10"
+                        android:layout_width="0dp" android:layout_height="64dp"
+                        android:layout_weight="1" android:text="−10°"
+                        android:textSize="14sp" android:backgroundTint="#1A2E4A"
+                        android:textColor="#FF8888" android:layout_marginEnd="3dp"
+                        style="@style/Widget.MaterialComponents.Button"/>
+
+                    <Button android:id="@+id/btnCourseM1"
+                        android:layout_width="0dp" android:layout_height="64dp"
+                        android:layout_weight="1" android:text="−1°"
+                        android:textSize="14sp" android:backgroundTint="#1A2E4A"
+                        android:textColor="#FFBBBB" android:layout_marginEnd="3dp"
+                        style="@style/Widget.MaterialComponents.Button"/>
+
+                    <!-- Current target display -->
+                    <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1.4" android:orientation="vertical"
+                        android:gravity="center" android:layout_marginHorizontal="2dp">
+                        <TextView android:id="@+id/tvCourseDisplay"
+                            android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:text="—°" android:textColor="#88CCFF"
+                            android:textSize="26sp" android:textStyle="bold"
+                            android:fontFamily="monospace" android:gravity="center"/>
+                        <TextView android:id="@+id/tvCourseCardinal"
+                            android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:text="—" android:textColor="#FFB300"
+                            android:textSize="14sp" android:fontFamily="monospace"
+                            android:gravity="center"/>
+                    </LinearLayout>
+
+                    <Button android:id="@+id/btnCourseP1"
+                        android:layout_width="0dp" android:layout_height="64dp"
+                        android:layout_weight="1" android:text="+1°"
+                        android:textSize="14sp" android:backgroundTint="#1A2E4A"
+                        android:textColor="#AAFFEE" android:layout_marginStart="3dp"
+                        style="@style/Widget.MaterialComponents.Button"/>
+
+                    <Button android:id="@+id/btnCourseP10"
+                        android:layout_width="0dp" android:layout_height="64dp"
+                        android:layout_weight="1" android:text="+10°"
+                        android:textSize="14sp" android:backgroundTint="#1A2E4A"
+                        android:textColor="#14FFEC" android:layout_marginStart="3dp"
+                        style="@style/Widget.MaterialComponents.Button"/>
+                </LinearLayout>
+
+                <!-- Set current heading as target + Pick from map -->
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:layout_marginTop="8dp">
+
+                    <Button android:id="@+id/btnSetCurrentCourse"
+                        android:layout_width="0dp" android:layout_height="40dp"
+                        android:layout_weight="1" android:text="HOLD COURSE"
+                        android:textSize="12sp" android:backgroundTint="#112233"
+                        android:textColor="#5599CC" android:layout_marginEnd="4dp"
+                        style="@style/Widget.MaterialComponents.Button"/>
+
+                    <Button android:id="@+id/btnPickTarget"
+                        android:layout_width="0dp" android:layout_height="40dp"
+                        android:layout_weight="1" android:text="📍 PICK TARGET"
+                        android:textSize="12sp" android:backgroundTint="#1A2A12"
+                        android:textColor="#88CC44" android:layout_marginStart="4dp"
+                        style="@style/Widget.MaterialComponents.Button"/>
+
+                </LinearLayout>
+            </LinearLayout>
+        </androidx.cardview.widget.CardView>
+
+        <!-- ── SPEED CONTROL ── -->
+        <androidx.cardview.widget.CardView android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:layout_marginHorizontal="12dp"
+            android:layout_marginBottom="8dp" app:cardBackgroundColor="#0D1525"
+            app:cardCornerRadius="10dp">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="vertical" android:padding="12dp">
+
+                <TextView android:text="SPEED (BOTH MOTORS)" android:textColor="#44AABBCC"
+                    android:textSize="11sp" android:fontFamily="monospace" android:letterSpacing="0.1"
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:layout_marginBottom="8dp"/>
+
+                <!-- Speed +/- hold buttons -->
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical">
+
+                    <Button android:id="@+id/btnSpeedDown"
+                        android:layout_width="0dp" android:layout_height="80dp"
+                        android:layout_weight="1" android:text="▼"
+                        android:textSize="30sp" android:backgroundTint="#1A2E4A"
+                        android:textColor="#6614FFEC" android:layout_marginEnd="8dp"
+                        style="@style/Widget.MaterialComponents.Button"/>
+
+                    <!-- Speed % display -->
+                    <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1.2" android:orientation="vertical"
+                        android:gravity="center">
+                        <TextView android:id="@+id/tvSpeedPct"
+                            android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:text="0%" android:textColor="#14FFEC"
+                            android:textSize="40sp" android:textStyle="bold"
+                            android:fontFamily="monospace" android:gravity="center"
+                            android:includeFontPadding="false"/>
+                        <SeekBar android:id="@+id/seekApSpeed"
+                            android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:layout_marginTop="6dp"
+                            android:progressTint="#14FFEC" android:thumbTint="#14FFEC"/>
+                    </LinearLayout>
+
+                    <Button android:id="@+id/btnSpeedUp"
+                        android:layout_width="0dp" android:layout_height="80dp"
+                        android:layout_weight="1" android:text="▲"
+                        android:textSize="30sp" android:backgroundTint="#0D4A3A"
+                        android:textColor="#14FFEC" android:layout_marginStart="8dp"
+                        style="@style/Widget.MaterialComponents.Button"/>
+                </LinearLayout>
+            </LinearLayout>
+        </androidx.cardview.widget.CardView>
+
+        <!-- ── LIVE MOTOR OUTPUT ── -->
+        <androidx.cardview.widget.CardView android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:layout_marginHorizontal="12dp"
+            android:layout_marginBottom="8dp" app:cardBackgroundColor="#080F1E"
+            app:cardCornerRadius="10dp">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="vertical" android:padding="10dp">
+
+                <TextView android:text="MOTOR OUTPUT" android:textColor="#44AABBCC"
+                    android:textSize="10sp" android:fontFamily="monospace"
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:layout_marginBottom="6dp"/>
+
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal">
+
+                    <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:orientation="vertical"
+                        android:gravity="center">
+                        <TextView android:text="PORT" android:textColor="#88AABBCC"
+                            android:textSize="11sp" android:fontFamily="monospace"
+                            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                        <TextView android:id="@+id/tvApPortPct"
+                            android:layout_width="wrap_content" android:layout_height="wrap_content"
+                            android:text="0%" android:textColor="#14FFEC"
+                            android:textSize="24sp" android:textStyle="bold"
+                            android:fontFamily="monospace"/>
+                        <ProgressBar android:id="@+id/apProgressPort"
+                            style="@style/Widget.AppCompat.ProgressBar.Horizontal"
+                            android:layout_width="match_parent" android:layout_height="6dp"
+                            android:max="100" android:progress="0"
+                            android:progressTint="#14FFEC"/>
+                    </LinearLayout>
+
+                    <LinearLayout android:layout_width="60dp" android:layout_height="wrap_content"
+                        android:orientation="vertical" android:gravity="center">
+                        <TextView android:id="@+id/tvDifferential"
+                            android:layout_width="wrap_content" android:layout_height="wrap_content"
+                            android:text="⟷0°" android:textColor="#FFB300"
+                            android:textSize="12sp" android:fontFamily="monospace"
+                            android:gravity="center"/>
+                    </LinearLayout>
+
+                    <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:orientation="vertical"
+                        android:gravity="center">
+                        <TextView android:text="STBD" android:textColor="#88AABBCC"
+                            android:textSize="11sp" android:fontFamily="monospace"
+                            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                        <TextView android:id="@+id/tvApStbdPct"
+                            android:layout_width="wrap_content" android:layout_height="wrap_content"
+                            android:text="0%" android:textColor="#FFB300"
+                            android:textSize="24sp" android:textStyle="bold"
+                            android:fontFamily="monospace"/>
+                        <ProgressBar android:id="@+id/apProgressStbd"
+                            style="@style/Widget.AppCompat.ProgressBar.Horizontal"
+                            android:layout_width="match_parent" android:layout_height="6dp"
+                            android:max="100" android:progress="0"
+                            android:progressTint="#FFB300"/>
+                    </LinearLayout>
+                </LinearLayout>
+
+                <TextView android:id="@+id/tvApTx"
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:text="—" android:textColor="#223344"
+                    android:textSize="10sp" android:fontFamily="monospace"
+                    android:layout_marginTop="6dp"/>
+            </LinearLayout>
+        </androidx.cardview.widget.CardView>
+
+        <!-- Back button -->
+        <Button android:id="@+id/btnApBack"
+            android:layout_width="match_parent" android:layout_height="40dp"
+            android:layout_marginHorizontal="12dp" android:layout_marginBottom="16dp"
+            android:text="← Back to Manual Control"
+            android:textSize="12sp" android:backgroundTint="#1A2030"
+            android:textColor="#88AABBCC"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"/>
+
+    </LinearLayout>
+</ScrollView>

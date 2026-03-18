@@ -127,10 +127,10 @@
                                 android:layout_marginStart="4dp"/>
                             <TextView android:id="@+id/btnGpsSource"
                                 android:layout_width="wrap_content" android:layout_height="wrap_content"
-                                android:text="BLE" android:textSize="11sp"
+                                android:text="BLE" android:textSize="13sp" android:textStyle="bold"
                                 android:textColor="#0D7377" android:fontFamily="monospace"
                                 android:background="@android:color/transparent"
-                                android:paddingHorizontal="6dp"
+                                android:paddingHorizontal="10dp" android:paddingVertical="6dp"
                                 android:layout_marginStart="4dp"/>
                         </LinearLayout>
                     </LinearLayout>
@@ -324,20 +324,27 @@
                 </LinearLayout>
             </LinearLayout>
 
-            <!-- ── BOTTOM: ARM | MAX ── -->
+            <!-- ── BOTTOM: ARM | AUTOPILOT | MAX ── -->
             <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
                 android:orientation="horizontal" android:paddingHorizontal="12dp"
                 android:paddingBottom="6dp">
                 <Button android:id="@+id/btnArm"
                     android:layout_width="0dp" android:layout_height="44dp"
                     android:layout_weight="1" android:text="ARM" android:textSize="13sp"
-                    android:layout_marginEnd="6dp" android:backgroundTint="#1A2E4A"
+                    android:layout_marginEnd="4dp" android:backgroundTint="#1A2E4A"
                     android:textColor="#14FFEC"
+                    style="@style/Widget.MaterialComponents.Button"/>
+                <Button android:id="@+id/btnAutopilot"
+                    android:layout_width="0dp" android:layout_height="44dp"
+                    android:layout_weight="1.2" android:text="✈ AUTO"
+                    android:textSize="13sp" android:textStyle="bold"
+                    android:layout_marginHorizontal="4dp"
+                    android:backgroundTint="#0D3A5A" android:textColor="#88CCFF"
                     style="@style/Widget.MaterialComponents.Button"/>
                 <Button android:id="@+id/btnFullFwd"
                     android:layout_width="0dp" android:layout_height="44dp"
                     android:layout_weight="1" android:text="MAX ▲" android:textSize="13sp"
-                    android:layout_marginStart="6dp" android:backgroundTint="#1A3A1A"
+                    android:layout_marginStart="4dp" android:backgroundTint="#1A3A1A"
                     android:textColor="#44FF44"
                     style="@style/Widget.MaterialComponents.Button"/>
             </LinearLayout>

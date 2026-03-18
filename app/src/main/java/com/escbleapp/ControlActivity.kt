@@ -301,6 +301,18 @@ class ControlActivity : AppCompatActivity() {
     // ── Main buttons ──────────────────────────────────────────────────────────
 
     private fun setupMainButtons() {
+        binding.btnAutopilot.setOnClickListener {
+            val intent = android.content.Intent(this, AutopilotActivity::class.java).apply {
+                putExtra(AutopilotActivity.EXTRA_DEVICE,      intent.getParcelableExtra<BluetoothDevice>(EXTRA_DEVICE))
+                putExtra(AutopilotActivity.EXTRA_DEVICE_NAME, intent.getStringExtra(EXTRA_DEVICE_NAME))
+                putExtra(AutopilotActivity.EXTRA_ESC_MODE,    escMode)
+                // Pass current throttle % so autopilot starts at same speed
+                val pct = valToPct(portVal)
+                putExtra(AutopilotActivity.EXTRA_INIT_SPEED_PCT, pct)
+            }
+            startActivity(intent)
+        }
+
         binding.btnStop.setOnClickListener { stopAll(); vibrate(80) }
 
         binding.btnArm.setOnClickListener {
