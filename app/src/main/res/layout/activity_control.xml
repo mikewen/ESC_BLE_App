@@ -38,6 +38,11 @@
                 android:layout_height="wrap_content" android:layout_weight="1"
                 android:text="ESC · 50Hz · 1000–2000µs · stop=1000"
                 android:textColor="#66AABBCC" android:textSize="11sp" android:fontFamily="monospace"/>
+            <!-- Live PWM value — prominent, always visible when connected -->
+            <TextView android:id="@+id/tvLivePwm"
+                android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:text="" android:textColor="#FFB300"
+                android:textSize="13sp" android:textStyle="bold" android:fontFamily="monospace"/>
         </LinearLayout>
 
         <!-- ── CONNECTING ── -->
@@ -112,7 +117,7 @@
                                 android:fontFamily="monospace" android:layout_marginStart="6dp"/>
                         </LinearLayout>
 
-                        <!-- Source + sats + toggle -->
+                        <!-- Source + sats + toggle + LOG -->
                         <LinearLayout android:layout_width="match_parent"
                             android:layout_height="wrap_content" android:orientation="horizontal"
                             android:gravity="center_vertical" android:layout_marginTop="4dp">
@@ -132,6 +137,13 @@
                                 android:background="@android:color/transparent"
                                 android:paddingHorizontal="10dp" android:paddingVertical="6dp"
                                 android:layout_marginStart="4dp"/>
+                            <!-- GPS log toggle -->
+                            <TextView android:id="@+id/btnGpsLog"
+                                android:layout_width="wrap_content" android:layout_height="wrap_content"
+                                android:text="⏺ LOG" android:textSize="12sp" android:textStyle="bold"
+                                android:textColor="#44556677" android:fontFamily="monospace"
+                                android:background="@android:color/transparent"
+                                android:paddingHorizontal="8dp" android:paddingVertical="6dp"/>
                         </LinearLayout>
                     </LinearLayout>
 
@@ -224,15 +236,9 @@
                     android:layout_weight="1" android:orientation="vertical"
                     android:gravity="center" android:layout_marginEnd="4dp">
 
-                    <TextView android:text="PORT" android:textColor="#14FFEC"
-                        android:textSize="13sp" android:textStyle="bold"
-                        android:fontFamily="monospace" android:gravity="center"
-                        android:layout_width="match_parent" android:layout_height="wrap_content"
-                        android:layout_marginBottom="4dp"/>
-
                     <Button android:id="@+id/btnPortUp"
                         android:layout_width="match_parent" android:layout_height="100dp"
-                        android:text="▲" android:textSize="36sp" android:textStyle="bold"
+                        android:text="PORT ▲" android:textSize="18sp" android:textStyle="bold"
                         android:backgroundTint="#0D4A3A" android:textColor="#14FFEC"
                         style="@style/Widget.MaterialComponents.Button"/>
 
@@ -245,7 +251,7 @@
 
                     <Button android:id="@+id/btnPortDown"
                         android:layout_width="match_parent" android:layout_height="100dp"
-                        android:text="▼" android:textSize="36sp"
+                        android:text="PORT ▼" android:textSize="18sp"
                         android:backgroundTint="#1A2E4A" android:textColor="#6614FFEC"
                         style="@style/Widget.MaterialComponents.Button"/>
                 </LinearLayout>
@@ -297,15 +303,9 @@
                     android:layout_weight="1" android:orientation="vertical"
                     android:gravity="center" android:layout_marginStart="4dp">
 
-                    <TextView android:text="STBD" android:textColor="#FFB300"
-                        android:textSize="13sp" android:textStyle="bold"
-                        android:fontFamily="monospace" android:gravity="center"
-                        android:layout_width="match_parent" android:layout_height="wrap_content"
-                        android:layout_marginBottom="4dp"/>
-
                     <Button android:id="@+id/btnStbdUp"
                         android:layout_width="match_parent" android:layout_height="100dp"
-                        android:text="▲" android:textSize="36sp" android:textStyle="bold"
+                        android:text="STBD ▲" android:textSize="18sp" android:textStyle="bold"
                         android:backgroundTint="#3A2E00" android:textColor="#FFB300"
                         style="@style/Widget.MaterialComponents.Button"/>
 
@@ -318,7 +318,7 @@
 
                     <Button android:id="@+id/btnStbdDown"
                         android:layout_width="match_parent" android:layout_height="100dp"
-                        android:text="▼" android:textSize="36sp"
+                        android:text="STBD ▼" android:textSize="18sp"
                         android:backgroundTint="#1A2E4A" android:textColor="#66FFB300"
                         style="@style/Widget.MaterialComponents.Button"/>
                 </LinearLayout>

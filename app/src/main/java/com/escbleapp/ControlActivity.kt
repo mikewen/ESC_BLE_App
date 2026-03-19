@@ -59,9 +59,8 @@ class ControlActivity : AppCompatActivity() {
         else showToast("Location permission denied — phone GPS unavailable")
     }
 
-    private val SEND_INTERVAL_MS = 50L     // 20 Hz send loop
     private val FEEDBACK_POLL_MS = 2_000L
-    private val HOLD_INTERVAL_MS = 80L     // ramp tick while holding button
+    private val HOLD_INTERVAL_MS = 250L    // ramp tick — 4 steps/sec
     private var isConnected      = false
 
     companion object {
@@ -70,14 +69,8 @@ class ControlActivity : AppCompatActivity() {
     }
 
     // ── Runnables ─────────────────────────────────────────────────────────────
-
-    private val sendRunnable = object : Runnable {
-        override fun run() {
-            sendCurrentVal()
-            if (portVal > stopValue() || starboardVal > stopValue())
-                handler.postDelayed(this, SEND_INTERVAL_MS)
-        }
-    }
+    // NO continuous send loop — commands sent only on user action (send-on-change).
+    // stopAll() sends CMD_STOP 3× for reliability.
 
     private val feedbackPollRunnable = object : Runnable {
         override fun run() {
@@ -114,6 +107,7 @@ class ControlActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         handler.removeCallbacksAndMessages(null)
+        gpsManager.stopLogging()
         gpsManager.stopPhoneGps()
         if (isConnected) { bleManager.stopMotors(); bleManager.disconnect().enqueue() }
         bleManager.close()
@@ -123,8 +117,11 @@ class ControlActivity : AppCompatActivity() {
 
     private fun stopValue()    = if (escMode) AC6328BleManager.ESC_MIN     else AC6328BleManager.BLDC_MIN
     private fun maxValue()     = if (escMode) AC6328BleManager.ESC_MAX     else AC6328BleManager.BLDC_MAX
-    private fun defaultValue() = if (escMode) AC6328BleManager.ESC_MIN     else AC6328BleManager.BLDC_DEFAULT
-    private fun stepSize()     = if (escMode) 10                            else 100   // per ramp tick
+    private fun defaultValue() = if (escMode) AC6328BleManager.ESC_DEFAULT else AC6328BleManager.BLDC_DEFAULT
+    // ESC:  5 duty/tick × 4/sec = 20 duty/sec → ~25s full range (500–1000, 500 units wide)
+    //       5 duty = 10µs = 1% throttle — matches your old app
+    // BLDC: 100/tick × 4/sec = 400/sec → ~25s full range (0–10000)
+    private fun stepSize()     = if (escMode) 5 else 100
 
     private fun valToPct(v: Int): Int {
         val range = maxValue() - stopValue()
@@ -134,21 +131,19 @@ class ControlActivity : AppCompatActivity() {
     @SuppressLint("SetTextI18n")
     private fun valToDisplay(v: Int): String = "${valToPct(v)}%"
 
-    /** Short display for the big label inside throttle column — always % */
     @SuppressLint("SetTextI18n")
     private fun valToShort(v: Int): String = "${valToPct(v)}%"
 
     private fun setupModeUi() {
+        // #1: Do NOT set btnArm.visibility here — updateUi() is the single source of truth
         if (escMode) {
             binding.tvModeLabel.text = "ESC"
             binding.tvModeLabel.setTextColor(android.graphics.Color.parseColor("#14FFEC"))
-            binding.tvModeHint.text  = "ESC · 50Hz · 1000–2000µs · stop=1000"
-            binding.btnArm.visibility = View.VISIBLE
+            binding.tvModeHint.text  = "ESC · 50Hz · duty 500–1000 · stop=500 (=1000µs)"
         } else {
             binding.tvModeLabel.text = "BLDC"
             binding.tvModeLabel.setTextColor(android.graphics.Color.parseColor("#FFB300"))
-            binding.tvModeHint.text  = "BLDC · Duty 0–10000 · default=500 · stop=0"
-            binding.btnArm.visibility = View.GONE
+            binding.tvModeHint.text  = "BLDC · duty 0–10000 · stop=0"
         }
     }
 
@@ -170,10 +165,11 @@ class ControlActivity : AppCompatActivity() {
                 vibrate(50)
                 handler.postDelayed({
                     if (escMode) bleManager.setEscMode() else bleManager.setBldcMode()
-                    bleManager.stopMotors()
+                    bleManager.stopMotors()          // send 1000µs stop — ESC holds it
                     portVal      = defaultValue()
                     starboardVal = defaultValue()
                     syncAllDisplays()
+                    updateLivePwm()
                     showToast("${if (escMode) "ESC" else "BLDC"} ready")
                 }, 400)
                 handler.postDelayed(feedbackPollRunnable, 1_500)
@@ -186,7 +182,7 @@ class ControlActivity : AppCompatActivity() {
             override fun onDeviceDisconnected(d: BluetoothDevice, reason: Int) = runOnUiThread {
                 isConnected = false
                 handler.removeCallbacks(feedbackPollRunnable)
-                handler.removeCallbacks(sendRunnable)
+                binding.tvLivePwm.text = ""
                 binding.tvStatus.text = "Disconnected"
                 updateUi(false)
                 vibrate(200)
@@ -341,10 +337,11 @@ class ControlActivity : AppCompatActivity() {
     }
 
     // ── Send ──────────────────────────────────────────────────────────────────
+    // Send-on-change only — one packet per user action, no continuous loop.
+    // ESC does not need heartbeat; it holds last command until next.
 
     private fun triggerSend() {
-        handler.removeCallbacks(sendRunnable)
-        handler.post(sendRunnable)
+        if (isConnected) sendCurrentVal()
     }
 
     private fun sendCurrentVal(force: Boolean = false) {
@@ -352,18 +349,38 @@ class ControlActivity : AppCompatActivity() {
         if (escMode) bleManager.sendEscPwm(portVal, starboardVal)
         else         bleManager.sendBldc(portVal, starboardVal)
         updateTxTelemetry()
+        updateLivePwm()
     }
 
     private fun stopAll() {
         portVal = stopValue(); starboardVal = stopValue()
         handler.removeCallbacksAndMessages(null)
-        // Re-post the feedback poll (removeAll cancelled it)
         if (isConnected) handler.postDelayed(feedbackPollRunnable, FEEDBACK_POLL_MS)
         syncAllDisplays()
-        bleManager.stopMotors()
+        updateLivePwm()
+        // Send STOP 3× staggered for reliability
+        if (isConnected) {
+            bleManager.stopMotors()
+            handler.postDelayed({ bleManager.stopMotors() }, 50)
+            handler.postDelayed({ bleManager.stopMotors() }, 100)
+        }
     }
 
     // ── Display helpers ───────────────────────────────────────────────────────
+
+    /** Update the live PWM badge in the mode bar — always shows actual values sent */
+    @SuppressLint("SetTextI18n")
+    private fun updateLivePwm() {
+        if (!isConnected) { binding.tvLivePwm.text = ""; return }
+        val pPct = valToPct(portVal);  val sPct = valToPct(starboardVal)
+        binding.tvLivePwm.text = if (escMode) {
+            // Show duty + µs equivalent: duty=700 → 1400µs
+            val pUs = bleManager.dutyToUs(portVal);  val sUs = bleManager.dutyToUs(starboardVal)
+            "P:${portVal}(${pUs}µs)  S:${starboardVal}(${sUs}µs)"
+        } else {
+            "P:$pPct%  S:$sPct%"
+        }
+    }
 
     private fun refreshPort() {
         val pct = valToPct(portVal)
@@ -383,11 +400,9 @@ class ControlActivity : AppCompatActivity() {
 
     @SuppressLint("SetTextI18n")
     private fun updateTxTelemetry() {
-        val p = portVal; val s = starboardVal
-        binding.tvTxPacket.text = if (escMode)
-            "TX→ ESC  PORT:%dµs  STBD:%dµs".format(p, s)
-        else
-            "TX→ BLDC  PORT:%d(%d%%)  STBD:%d(%d%%)".format(p, p/100, s, s/100)
+        val p    = portVal;  val s    = starboardVal
+        val pPct = valToPct(p); val sPct = valToPct(s)
+        binding.tvTxPacket.text = "TX  PORT:$pPct%(${p})  STBD:$sPct%(${s})"
     }
 
     // ── Feedback ──────────────────────────────────────────────────────────────
@@ -415,9 +430,9 @@ class ControlActivity : AppCompatActivity() {
             }
             "ae02-echo" -> {
                 val cmdName = when (fb.echoCmd) {
-                    AC6328BleManager.CMD_ESC_PWM   -> "ESC"
-                    AC6328BleManager.CMD_BLDC_DUTY -> "BLDC"
-                    AC6328BleManager.CMD_STOP      -> "STOP"
+                    AC6328BleManager.CMD_ESC_PWM.toInt()   -> "ESC"
+                    AC6328BleManager.CMD_BLDC_DUTY.toInt() -> "BLDC"
+                    AC6328BleManager.CMD_STOP.toInt()      -> "STOP"
                     else -> "0x%02X".format(fb.echoCmd)
                 }
                 binding.tvAe04Raw.text =
@@ -437,7 +452,9 @@ class ControlActivity : AppCompatActivity() {
         binding.layoutConnecting.visibility = if (!connected) View.VISIBLE else View.GONE
         listOf(binding.btnStop, binding.btnDisconnect,
             binding.btnReadFeedback, binding.btnFullFwd).forEach { it.isEnabled = connected }
-        binding.btnArm.isEnabled = connected && escMode
+        // ARM: only for ESC mode, always re-apply visibility here
+        binding.btnArm.visibility = if (escMode) View.VISIBLE else View.GONE
+        binding.btnArm.isEnabled  = connected && escMode
     }
 
     // ── Utils ─────────────────────────────────────────────────────────────────
@@ -469,16 +486,19 @@ class ControlActivity : AppCompatActivity() {
             binding.tvAe02.text = "ae02: $hex"
         }}
 
-        // Speed unit toggle (now a TextView)
+        gpsManager.onLogStatus = { msg -> runOnUiThread {
+            showToast(msg)
+        }}
+
+        // Speed unit toggle
         binding.btnSpeedUnit.setOnClickListener {
             speedUnitKnots = !speedUnitKnots
             binding.btnSpeedUnit.text = if (speedUnitKnots) "kt" else "km/h"
-            // Also update trip distance unit label
             binding.tvTripDistUnit.text = if (speedUnitKnots) "nm" else "km"
             updateGpsUi(gpsManager.getCurrentData())
         }
 
-        // GPS source toggle (now a TextView)
+        // GPS source toggle
         binding.btnGpsSource.setOnClickListener {
             val preferBle = binding.btnGpsSource.text == "BLE"
             if (preferBle) {
@@ -489,6 +509,24 @@ class ControlActivity : AppCompatActivity() {
                 gpsManager.setPreferPhoneGps()
                 binding.btnGpsSource.text = "BLE"
                 requestPhoneGps()
+            }
+        }
+
+        // GPS log toggle — ⏺ red when recording, dim when stopped
+        binding.btnGpsLog.setOnClickListener {
+            if (gpsManager.isLogging) {
+                gpsManager.stopLogging()
+                binding.btnGpsLog.text = "⏺ LOG"
+                binding.btnGpsLog.setTextColor(android.graphics.Color.parseColor("#44556677"))
+            } else {
+                val path = gpsManager.startLogging()
+                if (path != null) {
+                    binding.btnGpsLog.text = "⏹ REC"
+                    binding.btnGpsLog.setTextColor(android.graphics.Color.parseColor("#FF3333"))
+                    showToast("Logging to Downloads/")
+                } else {
+                    showToast("Failed to start log — check storage permission")
+                }
             }
         }
 

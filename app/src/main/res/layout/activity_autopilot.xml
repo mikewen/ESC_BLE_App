@@ -119,48 +119,50 @@
                     android:layout_width="wrap_content" android:layout_height="wrap_content"
                     android:layout_marginBottom="8dp"/>
 
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                <LinearLayout android:layout_width="match_parent" android:layout_height="64dp"
                     android:orientation="horizontal">
 
                     <Button android:id="@+id/btnCourseM10"
-                        android:layout_width="0dp" android:layout_height="64dp"
+                        android:layout_width="0dp" android:layout_height="match_parent"
                         android:layout_weight="1" android:text="−10°"
                         android:textSize="14sp" android:backgroundTint="#1A2E4A"
                         android:textColor="#FF8888" android:layout_marginEnd="3dp"
                         style="@style/Widget.MaterialComponents.Button"/>
 
                     <Button android:id="@+id/btnCourseM1"
-                        android:layout_width="0dp" android:layout_height="64dp"
+                        android:layout_width="0dp" android:layout_height="match_parent"
                         android:layout_weight="1" android:text="−1°"
                         android:textSize="14sp" android:backgroundTint="#1A2E4A"
                         android:textColor="#FFBBBB" android:layout_marginEnd="3dp"
                         style="@style/Widget.MaterialComponents.Button"/>
 
                     <!-- Current target display -->
-                    <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content"
+                    <LinearLayout android:layout_width="0dp" android:layout_height="match_parent"
                         android:layout_weight="1.4" android:orientation="vertical"
-                        android:gravity="center" android:layout_marginHorizontal="2dp">
+                        android:gravity="center" android:layout_marginHorizontal="2dp"
+                        android:background="#112233">
                         <TextView android:id="@+id/tvCourseDisplay"
                             android:layout_width="match_parent" android:layout_height="wrap_content"
                             android:text="—°" android:textColor="#88CCFF"
-                            android:textSize="26sp" android:textStyle="bold"
-                            android:fontFamily="monospace" android:gravity="center"/>
+                            android:textSize="22sp" android:textStyle="bold"
+                            android:fontFamily="monospace" android:gravity="center"
+                            android:includeFontPadding="false"/>
                         <TextView android:id="@+id/tvCourseCardinal"
                             android:layout_width="match_parent" android:layout_height="wrap_content"
                             android:text="—" android:textColor="#FFB300"
-                            android:textSize="14sp" android:fontFamily="monospace"
+                            android:textSize="13sp" android:fontFamily="monospace"
                             android:gravity="center"/>
                     </LinearLayout>
 
                     <Button android:id="@+id/btnCourseP1"
-                        android:layout_width="0dp" android:layout_height="64dp"
+                        android:layout_width="0dp" android:layout_height="match_parent"
                         android:layout_weight="1" android:text="+1°"
                         android:textSize="14sp" android:backgroundTint="#1A2E4A"
                         android:textColor="#AAFFEE" android:layout_marginStart="3dp"
                         style="@style/Widget.MaterialComponents.Button"/>
 
                     <Button android:id="@+id/btnCourseP10"
-                        android:layout_width="0dp" android:layout_height="64dp"
+                        android:layout_width="0dp" android:layout_height="match_parent"
                         android:layout_weight="1" android:text="+10°"
                         android:textSize="14sp" android:backgroundTint="#1A2E4A"
                         android:textColor="#14FFEC" android:layout_marginStart="3dp"
@@ -236,6 +238,93 @@
                         android:textColor="#14FFEC" android:layout_marginStart="8dp"
                         style="@style/Widget.MaterialComponents.Button"/>
                 </LinearLayout>
+            </LinearLayout>
+        </androidx.cardview.widget.CardView>
+
+        <!-- ── CONTROLLER TUNING ── -->
+        <androidx.cardview.widget.CardView android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:layout_marginHorizontal="12dp"
+            android:layout_marginBottom="8dp" app:cardBackgroundColor="#0A1020"
+            app:cardCornerRadius="10dp">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="vertical" android:padding="12dp">
+
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical"
+                    android:layout_marginBottom="8dp">
+                    <TextView android:text="CONTROLLER TUNING"
+                        android:textColor="#44AABBCC" android:textSize="11sp"
+                        android:fontFamily="monospace" android:layout_width="0dp"
+                        android:layout_height="wrap_content" android:layout_weight="1"/>
+                    <TextView android:id="@+id/btnResetGains"
+                        android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        android:text="RESET" android:textSize="11sp" android:textStyle="bold"
+                        android:textColor="#334455" android:fontFamily="monospace"
+                        android:paddingHorizontal="8dp" android:paddingVertical="4dp"
+                        android:background="@android:color/transparent"/>
+                </LinearLayout>
+
+                <!-- Kp row -->
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical"
+                    android:layout_marginBottom="8dp">
+                    <TextView android:text="Kp" android:textColor="#88CCFF"
+                        android:textSize="14sp" android:textStyle="bold"
+                        android:fontFamily="monospace" android:layout_width="28dp"
+                        android:layout_height="wrap_content"/>
+                    <Button android:id="@+id/btnKpMinus"
+                        android:layout_width="44dp" android:layout_height="36dp"
+                        android:text="−" android:textSize="18sp"
+                        android:backgroundTint="#1A2E4A" android:textColor="#FF8888"
+                        android:layout_marginEnd="6dp"
+                        style="@style/Widget.MaterialComponents.Button"/>
+                    <TextView android:id="@+id/tvKpValue"
+                        android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:text="0.80"
+                        android:textColor="#88CCFF" android:textSize="18sp"
+                        android:textStyle="bold" android:fontFamily="monospace"
+                        android:gravity="center"/>
+                    <Button android:id="@+id/btnKpPlus"
+                        android:layout_width="44dp" android:layout_height="36dp"
+                        android:text="+" android:textSize="18sp"
+                        android:backgroundTint="#1A2E4A" android:textColor="#14FFEC"
+                        android:layout_marginStart="6dp"
+                        style="@style/Widget.MaterialComponents.Button"/>
+                    <TextView android:text="  correction" android:textColor="#33445566"
+                        android:textSize="10sp" android:fontFamily="monospace"
+                        android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                </LinearLayout>
+
+                <!-- Ki row -->
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical">
+                    <TextView android:text="Ki" android:textColor="#FFB300"
+                        android:textSize="14sp" android:textStyle="bold"
+                        android:fontFamily="monospace" android:layout_width="28dp"
+                        android:layout_height="wrap_content"/>
+                    <Button android:id="@+id/btnKiMinus"
+                        android:layout_width="44dp" android:layout_height="36dp"
+                        android:text="−" android:textSize="18sp"
+                        android:backgroundTint="#1A2E4A" android:textColor="#FF8888"
+                        android:layout_marginEnd="6dp"
+                        style="@style/Widget.MaterialComponents.Button"/>
+                    <TextView android:id="@+id/tvKiValue"
+                        android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:text="0.050"
+                        android:textColor="#FFB300" android:textSize="18sp"
+                        android:textStyle="bold" android:fontFamily="monospace"
+                        android:gravity="center"/>
+                    <Button android:id="@+id/btnKiPlus"
+                        android:layout_width="44dp" android:layout_height="36dp"
+                        android:text="+" android:textSize="18sp"
+                        android:backgroundTint="#1A2E4A" android:textColor="#14FFEC"
+                        android:layout_marginStart="6dp"
+                        style="@style/Widget.MaterialComponents.Button"/>
+                    <TextView android:text="  drift fix" android:textColor="#33445566"
+                        android:textSize="10sp" android:fontFamily="monospace"
+                        android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                </LinearLayout>
+
             </LinearLayout>
         </androidx.cardview.widget.CardView>
 

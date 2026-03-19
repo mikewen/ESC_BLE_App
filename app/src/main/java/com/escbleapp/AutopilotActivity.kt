@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.bluetooth.BluetoothDevice
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -55,9 +56,20 @@ class AutopilotActivity : AppCompatActivity() {
     private var actualHeading = 0f
     private var hasHeading    = false
 
-    // ── PID (proportional only for now) ──────────────────────────────────────
-    private val Kp           = 0.8f   // proportional gain — tune to vessel
-    private val MAX_DIFF_PCT = 30     // max differential ±% between port and stbd
+    // ── PI controller ─────────────────────────────────────────────────────────
+    // Kp/Ki loaded from SharedPreferences — adjustable live on the tuning card
+    private val KP_DEFAULT   = 0.8f
+    private val KI_DEFAULT   = 0.05f
+    private val KP_STEP      = 0.05f
+    private val KI_STEP      = 0.005f
+    private val MAX_DIFF_PCT = 30
+    private val MAX_INTEGRAL = 20f
+
+    private var Kp = KP_DEFAULT
+    private var Ki = KI_DEFAULT
+    private var headingIntegral = 0f
+
+    private lateinit var prefs: SharedPreferences
 
     // ── Timing ────────────────────────────────────────────────────────────────
     private val CONTROL_INTERVAL_MS = 200L   // 5 Hz control loop
@@ -83,7 +95,7 @@ class AutopilotActivity : AppCompatActivity() {
             hasWaypoint = true
             targetHeading = bearing
             updateCourseDisplay()
-            showToast("Target set → %.0f°".format(bearing))
+            showToast("Target set → %.0f".format(bearing))
         }
     }
 
@@ -117,6 +129,11 @@ class AutopilotActivity : AppCompatActivity() {
         escMode         = intent.getBooleanExtra(EXTRA_ESC_MODE, true)
         baseSpeedPct    = intent.getIntExtra(EXTRA_INIT_SPEED_PCT, 0)
 
+        // Load saved Kp/Ki
+        prefs = getSharedPreferences("autopilot_prefs", Context.MODE_PRIVATE)
+        Kp = prefs.getFloat("kp", KP_DEFAULT)
+        Ki = prefs.getFloat("ki", KI_DEFAULT)
+
         binding.tvApDeviceName.text = deviceName
 
         setupBleManager(device)
@@ -124,10 +141,11 @@ class AutopilotActivity : AppCompatActivity() {
         setupCourseButtons()
         setupSpeedControls()
         setupEngageButtons()
+        setupTuning()
         setupBackPress()
 
-        // Initialise speed display
         updateSpeedDisplay()
+        updateCourseDisplay()
     }
 
     override fun onDestroy() {
@@ -186,23 +204,23 @@ class AutopilotActivity : AppCompatActivity() {
 
         binding.apCompassView.headingDeg = actualHeading
         binding.apCompassView.hasFix     = data.hasFix
-        binding.tvActualHeading.text     = if (data.hasHeading) "%.0f°".format(actualHeading) else "—°"
+        binding.tvActualHeading.text     = if (data.hasHeading) "%.0f".format(actualHeading) + "°" else "—°"
         binding.tvApSpeed.text           = "%.1f kt".format(data.speedKnots)
 
         // If waypoint mode: recalculate bearing-to-waypoint from current position
         if (hasWaypoint && data.latDeg != 0.0) {
             targetHeading = bearingTo(data.latDeg, data.lonDeg, targetLat, targetLon)
             val distNm    = haversineNm(data.latDeg, data.lonDeg, targetLat, targetLon)
-            binding.tvCourseDisplay.text  = "%.0f°".format(targetHeading)
+            binding.tvCourseDisplay.text  = "%.0f".format(targetHeading) + "°"
             binding.tvCourseCardinal.text = "%.2f nm".format(distNm)
-            binding.tvTargetHeading.text  = "%.0f°".format(targetHeading)
+            binding.tvTargetHeading.text  = "%.0f".format(targetHeading) + "°"
             if (engaged) binding.tvApStatus.text =
-                "✈ WAYPOINT  →  %.0f°  (%.2f nm)".format(targetHeading, distNm)
+                "✈ WAYPOINT  →  %.0f  (%.2f nm)".format(targetHeading, distNm)
         }
 
         if (engaged && data.hasHeading) {
             val err = headingError(targetHeading, actualHeading)
-            binding.tvHeadingError.text = "%+.0f°".format(err)
+            binding.tvHeadingError.text = "%+.0f".format(err)
         }
     }
 
@@ -228,18 +246,28 @@ class AutopilotActivity : AppCompatActivity() {
     // ── Control loop ──────────────────────────────────────────────────────────
 
     /**
-     * Proportional heading controller with differential thrust.
+     * PI heading controller with differential thrust.
      *
      * heading_error > 0 → vessel is left of target → need to turn right
      *   → increase PORT, reduce STBD
      * heading_error < 0 → vessel is right of target → turn left
      *   → reduce PORT, increase STBD
+     *
+     * Integral term eliminates steady-state offset from wind/current.
+     * Anti-windup: integral clamped to ±MAX_INTEGRAL.
      */
     private fun runControlStep() {
         if (!hasHeading || !isConnected) return
 
+        val dt    = CONTROL_INTERVAL_MS / 1000f          // seconds per tick
         val error = headingError(targetHeading, actualHeading)
-        val diff  = (error * Kp).toInt().coerceIn(-MAX_DIFF_PCT, MAX_DIFF_PCT)
+
+        // Integrate with anti-windup clamp
+        headingIntegral = (headingIntegral + error * dt)
+            .coerceIn(-MAX_INTEGRAL, MAX_INTEGRAL)
+
+        val diff = (error * Kp + headingIntegral * Ki)
+            .toInt().coerceIn(-MAX_DIFF_PCT, MAX_DIFF_PCT)
 
         val portPct = (baseSpeedPct + diff).coerceIn(0, 100)
         val stbdPct = (baseSpeedPct - diff).coerceIn(0, 100)
@@ -258,10 +286,10 @@ class AutopilotActivity : AppCompatActivity() {
 
     private fun sendMotors(portPct: Int, stbdPct: Int) {
         if (escMode) {
-            val portUs = 1000 + portPct * 10
-            val stbdUs = 1000 + stbdPct * 10
-            bleManager.sendEscPwm(portUs, stbdUs)
+            // ESC duty 500–1000: map 0–100% into that 500-unit range
+            bleManager.sendEscPwm(500 + portPct * 5, 500 + stbdPct * 5)
         } else {
+            // BLDC duty 0–10000: map 0–100% directly
             bleManager.sendBldc(portPct * 100, stbdPct * 100)
         }
     }
@@ -273,7 +301,7 @@ class AutopilotActivity : AppCompatActivity() {
         if (!hasHeading)  { showToast("No heading — waiting for GPS fix"); return }
 
         engaged = true
-        binding.tvApStatus.text = "✈ ENGAGED  →  %.0f°".format(targetHeading)
+        binding.tvApStatus.text = "✈ ENGAGED  →  %.0f".format(targetHeading)
         binding.btnEngage.backgroundTintList =
             android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#14FFEC"))
         binding.btnEngage.setTextColor(android.graphics.Color.parseColor("#0A1628"))
@@ -283,6 +311,7 @@ class AutopilotActivity : AppCompatActivity() {
 
     private fun disengage() {
         engaged = false
+        headingIntegral = 0f          // reset integral — don't carry stale state to next engage
         handler.removeCallbacks(controlRunnable)
         binding.tvApStatus.text = "✈ AUTOPILOT · STANDBY"
         binding.btnEngage.backgroundTintList =
@@ -302,7 +331,7 @@ class AutopilotActivity : AppCompatActivity() {
                 hasWaypoint   = false   // cancel waypoint mode
                 targetHeading = actualHeading
                 updateCourseDisplay()
-                showToast("Holding course %.0f°".format(targetHeading))
+                showToast("Holding course %.0f".format(targetHeading))
             } else {
                 showToast("No GPS heading yet")
             }
@@ -332,7 +361,7 @@ class AutopilotActivity : AppCompatActivity() {
     private fun adjustCourse(delta: Float) {
         targetHeading = (targetHeading + delta + 360f) % 360f
         updateCourseDisplay()
-        if (engaged) binding.tvApStatus.text = "✈ ENGAGED  →  %.0f°".format(targetHeading)
+        if (engaged) binding.tvApStatus.text = "✈ ENGAGED  →  %.0f".format(targetHeading)
         vibrate(30)
     }
 
@@ -349,8 +378,8 @@ class AutopilotActivity : AppCompatActivity() {
 
     @SuppressLint("SetTextI18n")
     private fun updateCourseDisplay() {
-        binding.tvTargetHeading.text  = "%.0f°".format(targetHeading)
-        binding.tvCourseDisplay.text  = "%.0f°".format(targetHeading)
+        binding.tvTargetHeading.text  = "%.0f".format(targetHeading) + "°"
+        binding.tvCourseDisplay.text  = "%.0f".format(targetHeading) + "°"
         binding.tvCourseCardinal.text = headingToCardinal(targetHeading)
         binding.apCompassView.invalidate()
     }
@@ -405,12 +434,12 @@ class AutopilotActivity : AppCompatActivity() {
 
     @SuppressLint("SetTextI18n")
     private fun updateMotorDisplay(portPct: Int, stbdPct: Int, headingErr: Float) {
-        binding.tvApPortPct.text       = "$portPct%"
-        binding.tvApStbdPct.text       = "$stbdPct%"
+        binding.tvApPortPct.text        = "$portPct%"
+        binding.tvApStbdPct.text        = "$stbdPct%"
         binding.apProgressPort.progress = portPct
         binding.apProgressStbd.progress = stbdPct
-        binding.tvDifferential.text    = "⟷%+.0f°".format(headingErr)
-        binding.tvApTx.text            = "PORT:$portPct%  STBD:$stbdPct%  Δ=%+.1f°".format(headingErr)
+        binding.tvDifferential.text     = "⟷" + "%+.0f".format(headingErr) + "°"
+        binding.tvApTx.text             = "PORT:$portPct%  STBD:$stbdPct%  Δ=" + "%+.1f".format(headingErr) + "°"
     }
 
     // ── Utils ─────────────────────────────────────────────────────────────────
@@ -428,6 +457,46 @@ class AutopilotActivity : AppCompatActivity() {
                 vib.vibrate(VibrationEffect.createOneShot(ms, VibrationEffect.DEFAULT_AMPLITUDE))
             else @Suppress("DEPRECATION") vib.vibrate(ms)
         }
+    }
+
+    // ── Tuning (Kp / Ki) ─────────────────────────────────────────────────────
+
+    private fun setupTuning() {
+        updateTuningDisplay()
+
+        binding.btnKpPlus.setOnClickListener  { adjustKp(+KP_STEP) }
+        binding.btnKpMinus.setOnClickListener { adjustKp(-KP_STEP) }
+        binding.btnKiPlus.setOnClickListener  { adjustKi(+KI_STEP) }
+        binding.btnKiMinus.setOnClickListener { adjustKi(-KI_STEP) }
+
+        binding.btnResetGains.setOnClickListener {
+            Kp = KP_DEFAULT; Ki = KI_DEFAULT
+            headingIntegral = 0f
+            saveGains()
+            updateTuningDisplay()
+            showToast("Gains reset to defaults")
+        }
+    }
+
+    private fun adjustKp(delta: Float) {
+        Kp = (Kp + delta).coerceIn(0.1f, 5.0f)
+        saveGains(); updateTuningDisplay()
+    }
+
+    private fun adjustKi(delta: Float) {
+        Ki = (Ki + delta).coerceIn(0.0f, 1.0f)
+        headingIntegral = 0f   // reset integral when Ki changes to avoid sudden jump
+        saveGains(); updateTuningDisplay()
+    }
+
+    private fun saveGains() {
+        prefs.edit().putFloat("kp", Kp).putFloat("ki", Ki).apply()
+    }
+
+    @SuppressLint("SetTextI18n")
+    private fun updateTuningDisplay() {
+        binding.tvKpValue.text = "%.2f".format(Kp)
+        binding.tvKiValue.text = "%.3f".format(Ki)
     }
 
     private fun setupBackPress() {
