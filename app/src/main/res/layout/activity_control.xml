@@ -25,24 +25,24 @@
                 android:textColor="#14FFEC" android:textSize="13sp" android:fontFamily="monospace"/>
         </LinearLayout>
 
-        <!-- ── MODE INFO BAR (read-only) ── -->
+        <!-- ── MODE INFO BAR ── -->
         <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
             android:background="#0D1A2E" android:orientation="horizontal"
-            android:paddingHorizontal="12dp" android:paddingVertical="6dp"
+            android:paddingHorizontal="12dp" android:paddingVertical="5dp"
             android:gravity="center_vertical">
             <TextView android:id="@+id/tvModeLabel" android:layout_width="wrap_content"
                 android:layout_height="wrap_content" android:text="ESC"
                 android:textSize="14sp" android:textStyle="bold" android:textColor="#14FFEC"
-                android:fontFamily="monospace" android:layout_marginEnd="10dp"/>
+                android:fontFamily="monospace" android:layout_marginEnd="8dp"/>
             <TextView android:id="@+id/tvModeHint" android:layout_width="0dp"
                 android:layout_height="wrap_content" android:layout_weight="1"
-                android:text="ESC · 50Hz · 1000–2000µs · stop=1000"
-                android:textColor="#66AABBCC" android:textSize="11sp" android:fontFamily="monospace"/>
-            <!-- Live PWM value — prominent, always visible when connected -->
+                android:text="50Hz · duty 500–1000"
+                android:textColor="#55AABBCC" android:textSize="11sp"
+                android:fontFamily="monospace" android:singleLine="true"/>
             <TextView android:id="@+id/tvLivePwm"
                 android:layout_width="wrap_content" android:layout_height="wrap_content"
                 android:text="" android:textColor="#FFB300"
-                android:textSize="13sp" android:textStyle="bold" android:fontFamily="monospace"/>
+                android:textSize="12sp" android:textStyle="bold" android:fontFamily="monospace"/>
         </LinearLayout>
 
         <!-- ── CONNECTING ── -->
@@ -137,7 +137,6 @@
                                 android:background="@android:color/transparent"
                                 android:paddingHorizontal="10dp" android:paddingVertical="6dp"
                                 android:layout_marginStart="4dp"/>
-                            <!-- GPS log toggle -->
                             <TextView android:id="@+id/btnGpsLog"
                                 android:layout_width="wrap_content" android:layout_height="wrap_content"
                                 android:text="⏺ LOG" android:textSize="12sp" android:textStyle="bold"
@@ -145,6 +144,12 @@
                                 android:background="@android:color/transparent"
                                 android:paddingHorizontal="8dp" android:paddingVertical="6dp"/>
                         </LinearLayout>
+                        <!-- GPS diagnostic status — shows permission/fix state on screen -->
+                        <TextView android:id="@+id/tvGpsStatus"
+                            android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:text="GPS: initialising…"
+                            android:textColor="#44AABBCC" android:textSize="10sp"
+                            android:fontFamily="monospace" android:layout_marginTop="2dp"/>
                     </LinearLayout>
 
                     <!-- RIGHT: Trip stats -->
@@ -257,10 +262,9 @@
                 </LinearLayout>
 
                 <!-- ── CENTRE column: BOTH + STOP + SYNC ── -->
-                <LinearLayout android:layout_width="72dp" android:layout_height="wrap_content"
+                <LinearLayout android:layout_width="80dp" android:layout_height="wrap_content"
                     android:orientation="vertical" android:gravity="center">
 
-                    <!-- BOTH UP -->
                     <Button android:id="@+id/btnBothUp"
                         android:layout_width="match_parent" android:layout_height="64dp"
                         android:text="⬆" android:textSize="22sp" android:textStyle="bold"
@@ -268,15 +272,13 @@
                         android:layout_marginBottom="4dp"
                         style="@style/Widget.MaterialComponents.Button"/>
 
-                    <!-- STOP -->
                     <Button android:id="@+id/btnStop"
                         android:layout_width="match_parent" android:layout_height="64dp"
-                        android:text="STOP" android:textSize="12sp" android:textStyle="bold"
+                        android:text="⏹" android:textSize="28sp" android:textStyle="bold"
                         android:backgroundTint="#CC2200" android:textColor="#FFFFFF"
                         android:layout_marginVertical="4dp"
                         style="@style/Widget.MaterialComponents.Button"/>
 
-                    <!-- BOTH DOWN -->
                     <Button android:id="@+id/btnBothDown"
                         android:layout_width="match_parent" android:layout_height="64dp"
                         android:text="⬇" android:textSize="22sp"
@@ -284,7 +286,6 @@
                         android:layout_marginTop="4dp"
                         style="@style/Widget.MaterialComponents.Button"/>
 
-                    <!-- SYNC toggle -->
                     <com.google.android.material.switchmaterial.SwitchMaterial
                         android:id="@+id/switchSync"
                         android:layout_width="wrap_content" android:layout_height="wrap_content"
@@ -292,9 +293,9 @@
                         app:thumbTint="#14FFEC" app:trackTint="#1A2E4A"/>
                     <TextView android:id="@+id/tvSyncLabel"
                         android:layout_width="wrap_content" android:layout_height="wrap_content"
-                        android:text="Sync" android:textColor="#44AABBCC"
-                        android:textSize="10sp" android:fontFamily="monospace"
-                        android:gravity="center"/>
+                        android:text="SYNC" android:textColor="#88AABBCC"
+                        android:textSize="12sp" android:textStyle="bold"
+                        android:fontFamily="monospace" android:gravity="center"/>
                 </LinearLayout>
 
                 <!-- ── STBD column ── -->

@@ -68,7 +68,7 @@
             android:textSize="11sp" android:fontFamily="monospace"
             android:layout_marginBottom="8dp"/>
 
-        <!-- Confirm / Cancel -->
+        <!-- Confirm / Cancel / Satellite toggle -->
         <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
             android:orientation="horizontal">
 
@@ -76,14 +76,21 @@
                 android:layout_width="0dp" android:layout_height="44dp"
                 android:layout_weight="1" android:text="CANCEL"
                 android:textSize="13sp" android:backgroundTint="#1A2030"
-                android:textColor="#88AABBCC" android:layout_marginEnd="6dp"
+                android:textColor="#88AABBCC" android:layout_marginEnd="4dp"
+                style="@style/Widget.MaterialComponents.Button"/>
+
+            <Button android:id="@+id/btnMapLayer"
+                android:layout_width="wrap_content" android:layout_height="44dp"
+                android:text="🛰 SAT" android:textSize="12sp"
+                android:backgroundTint="#0D2233" android:textColor="#88CCFF"
+                android:paddingHorizontal="12dp" android:layout_marginEnd="4dp"
                 style="@style/Widget.MaterialComponents.Button"/>
 
             <Button android:id="@+id/btnMapConfirm"
                 android:layout_width="0dp" android:layout_height="44dp"
                 android:layout_weight="1" android:text="SET TARGET →"
                 android:textSize="13sp" android:backgroundTint="#0D4A3A"
-                android:textColor="#14FFEC" android:layout_marginStart="6dp"
+                android:textColor="#14FFEC" android:layout_marginStart="0dp"
                 android:enabled="false"
                 style="@style/Widget.MaterialComponents.Button"/>
         </LinearLayout>

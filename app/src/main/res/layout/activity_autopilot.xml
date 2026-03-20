@@ -124,15 +124,15 @@
 
                     <Button android:id="@+id/btnCourseM10"
                         android:layout_width="0dp" android:layout_height="match_parent"
-                        android:layout_weight="1" android:text="−10°"
-                        android:textSize="14sp" android:backgroundTint="#1A2E4A"
+                        android:layout_weight="1" android:text="−10"
+                        android:textSize="13sp" android:backgroundTint="#1A2E4A"
                         android:textColor="#FF8888" android:layout_marginEnd="3dp"
                         style="@style/Widget.MaterialComponents.Button"/>
 
                     <Button android:id="@+id/btnCourseM1"
                         android:layout_width="0dp" android:layout_height="match_parent"
                         android:layout_weight="1" android:text="−1°"
-                        android:textSize="14sp" android:backgroundTint="#1A2E4A"
+                        android:textSize="13sp" android:backgroundTint="#1A2E4A"
                         android:textColor="#FFBBBB" android:layout_marginEnd="3dp"
                         style="@style/Widget.MaterialComponents.Button"/>
 
@@ -157,34 +157,36 @@
                     <Button android:id="@+id/btnCourseP1"
                         android:layout_width="0dp" android:layout_height="match_parent"
                         android:layout_weight="1" android:text="+1°"
-                        android:textSize="14sp" android:backgroundTint="#1A2E4A"
+                        android:textSize="13sp" android:backgroundTint="#1A2E4A"
                         android:textColor="#AAFFEE" android:layout_marginStart="3dp"
                         style="@style/Widget.MaterialComponents.Button"/>
 
                     <Button android:id="@+id/btnCourseP10"
                         android:layout_width="0dp" android:layout_height="match_parent"
-                        android:layout_weight="1" android:text="+10°"
-                        android:textSize="14sp" android:backgroundTint="#1A2E4A"
+                        android:layout_weight="1" android:text="+10"
+                        android:textSize="13sp" android:backgroundTint="#1A2E4A"
                         android:textColor="#14FFEC" android:layout_marginStart="3dp"
                         style="@style/Widget.MaterialComponents.Button"/>
                 </LinearLayout>
 
-                <!-- Set current heading as target + Pick from map -->
+                <!-- HOLD COURSE + PICK TARGET — taller, more prominent -->
                 <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
                     android:orientation="horizontal" android:layout_marginTop="8dp">
 
                     <Button android:id="@+id/btnSetCurrentCourse"
-                        android:layout_width="0dp" android:layout_height="40dp"
+                        android:layout_width="0dp" android:layout_height="52dp"
                         android:layout_weight="1" android:text="HOLD COURSE"
-                        android:textSize="12sp" android:backgroundTint="#112233"
-                        android:textColor="#5599CC" android:layout_marginEnd="4dp"
+                        android:textSize="13sp" android:textStyle="bold"
+                        android:backgroundTint="#0D2A44" android:textColor="#5599CC"
+                        android:layout_marginEnd="4dp"
                         style="@style/Widget.MaterialComponents.Button"/>
 
                     <Button android:id="@+id/btnPickTarget"
-                        android:layout_width="0dp" android:layout_height="40dp"
-                        android:layout_weight="1" android:text="📍 PICK TARGET"
-                        android:textSize="12sp" android:backgroundTint="#1A2A12"
-                        android:textColor="#88CC44" android:layout_marginStart="4dp"
+                        android:layout_width="0dp" android:layout_height="52dp"
+                        android:layout_weight="1" android:text="📍 TARGET"
+                        android:textSize="13sp" android:textStyle="bold"
+                        android:backgroundTint="#1A2A12" android:textColor="#88CC44"
+                        android:layout_marginStart="4dp"
                         style="@style/Widget.MaterialComponents.Button"/>
 
                 </LinearLayout>
@@ -290,8 +292,8 @@
                         android:backgroundTint="#1A2E4A" android:textColor="#14FFEC"
                         android:layout_marginStart="6dp"
                         style="@style/Widget.MaterialComponents.Button"/>
-                    <TextView android:text="  correction" android:textColor="#33445566"
-                        android:textSize="10sp" android:fontFamily="monospace"
+                    <TextView android:text="  correction" android:textColor="#99AABBCC"
+                        android:textSize="12sp" android:fontFamily="monospace"
                         android:layout_width="wrap_content" android:layout_height="wrap_content"/>
                 </LinearLayout>
 
@@ -320,8 +322,39 @@
                         android:backgroundTint="#1A2E4A" android:textColor="#14FFEC"
                         android:layout_marginStart="6dp"
                         style="@style/Widget.MaterialComponents.Button"/>
-                    <TextView android:text="  drift fix" android:textColor="#33445566"
-                        android:textSize="10sp" android:fontFamily="monospace"
+                    <TextView android:text="  drift fix" android:textColor="#99AABBCC"
+                        android:textSize="12sp" android:fontFamily="monospace"
+                        android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                </LinearLayout>
+
+                <!-- Deadband row -->
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical"
+                    android:layout_marginTop="8dp">
+                    <TextView android:text="DB" android:textColor="#88CC88"
+                        android:textSize="14sp" android:textStyle="bold"
+                        android:fontFamily="monospace" android:layout_width="28dp"
+                        android:layout_height="wrap_content"/>
+                    <Button android:id="@+id/btnDeadbandMinus"
+                        android:layout_width="44dp" android:layout_height="36dp"
+                        android:text="−" android:textSize="18sp"
+                        android:backgroundTint="#1A2E4A" android:textColor="#FF8888"
+                        android:layout_marginEnd="6dp"
+                        style="@style/Widget.MaterialComponents.Button"/>
+                    <TextView android:id="@+id/tvDeadbandValue"
+                        android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:text="3.0°"
+                        android:textColor="#88CC88" android:textSize="18sp"
+                        android:textStyle="bold" android:fontFamily="monospace"
+                        android:gravity="center"/>
+                    <Button android:id="@+id/btnDeadbandPlus"
+                        android:layout_width="44dp" android:layout_height="36dp"
+                        android:text="+" android:textSize="18sp"
+                        android:backgroundTint="#1A2E4A" android:textColor="#14FFEC"
+                        android:layout_marginStart="6dp"
+                        style="@style/Widget.MaterialComponents.Button"/>
+                    <TextView android:text="  ±noise band" android:textColor="#99AABBCC"
+                        android:textSize="12sp" android:fontFamily="monospace"
                         android:layout_width="wrap_content" android:layout_height="wrap_content"/>
                 </LinearLayout>
 

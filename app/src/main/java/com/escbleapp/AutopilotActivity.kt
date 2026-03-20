@@ -57,17 +57,21 @@ class AutopilotActivity : AppCompatActivity() {
     private var hasHeading    = false
 
     // ── PI controller ─────────────────────────────────────────────────────────
-    // Kp/Ki loaded from SharedPreferences — adjustable live on the tuning card
-    private val KP_DEFAULT   = 0.8f
-    private val KI_DEFAULT   = 0.05f
-    private val KP_STEP      = 0.05f
-    private val KI_STEP      = 0.005f
-    private val MAX_DIFF_PCT = 30
-    private val MAX_INTEGRAL = 20f
+    // All gains and deadband loaded from SharedPreferences — adjustable live
+    private val KP_DEFAULT       = 0.8f
+    private val KI_DEFAULT       = 0.05f
+    private val KP_STEP          = 0.05f
+    private val KI_STEP          = 0.005f
+    private val DEADBAND_DEFAULT = 3.0f   // degrees — no correction within this band
+    private val DEADBAND_STEP    = 0.5f
+    private val MAX_DIFF_PCT     = 30
+    private val MAX_INTEGRAL     = 20f
 
-    private var Kp = KP_DEFAULT
-    private var Ki = KI_DEFAULT
+    private var Kp              = KP_DEFAULT
+    private var Ki              = KI_DEFAULT
+    private var deadbandDeg     = DEADBAND_DEFAULT
     private var headingIntegral = 0f
+    private var headingConfidence = 1f   // 0–1 from GPS sAcc, scales correction output
 
     private lateinit var prefs: SharedPreferences
 
@@ -130,9 +134,10 @@ class AutopilotActivity : AppCompatActivity() {
         baseSpeedPct    = intent.getIntExtra(EXTRA_INIT_SPEED_PCT, 0)
 
         // Load saved Kp/Ki
-        prefs = getSharedPreferences("autopilot_prefs", Context.MODE_PRIVATE)
-        Kp = prefs.getFloat("kp", KP_DEFAULT)
-        Ki = prefs.getFloat("ki", KI_DEFAULT)
+        prefs       = getSharedPreferences("autopilot_prefs", Context.MODE_PRIVATE)
+        Kp          = prefs.getFloat("kp", KP_DEFAULT)
+        Ki          = prefs.getFloat("ki", KI_DEFAULT)
+        deadbandDeg = prefs.getFloat("deadband", DEADBAND_DEFAULT)
 
         binding.tvApDeviceName.text = deviceName
 
@@ -190,24 +195,38 @@ class AutopilotActivity : AppCompatActivity() {
 
     // ── GPS ───────────────────────────────────────────────────────────────────
 
+    // Location permission launcher — needed if user arrives at autopilot before granting
+    private val locationPermLauncher = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) gpsManager.startPhoneGps()
+        else showToast("Location permission denied — GPS heading unavailable")
+    }
+
     private fun setupGps() {
         gpsManager = GpsManager(this)
         gpsManager.onUpdate = { data -> runOnUiThread { onGpsUpdate(data) } }
 
         if (gpsManager.hasLocationPermission()) gpsManager.startPhoneGps()
+        else locationPermLauncher.launch(android.Manifest.permission.ACCESS_FINE_LOCATION)
     }
 
+    @SuppressLint("SetTextI18n")
     private fun onGpsUpdate(data: GpsManager.GpsData) {
-        if (!data.hasFix) return
-        actualHeading = data.headingDeg
-        hasHeading    = data.hasHeading
+        // Always update heading/confidence from any GPS data — don't block on hasFix
+        actualHeading     = data.headingDeg
+        hasHeading        = data.hasHeading
+        headingConfidence = data.headingConfidence
 
         binding.apCompassView.headingDeg = actualHeading
         binding.apCompassView.hasFix     = data.hasFix
-        binding.tvActualHeading.text     = if (data.hasHeading) "%.0f".format(actualHeading) + "°" else "—°"
-        binding.tvApSpeed.text           = "%.1f kt".format(data.speedKnots)
 
-        // If waypoint mode: recalculate bearing-to-waypoint from current position
+        // Show fix quality in the speed line
+        val confPct  = (headingConfidence * 100).toInt()
+        val fixLabel = if (data.hasFix) "" else " ⚠no fix"
+        binding.tvActualHeading.text = if (data.hasHeading) "%.0f".format(actualHeading) + "°" else "—°"
+        binding.tvApSpeed.text = "%.1f kt  conf:%d%%%s".format(data.speedKnots, confPct, fixLabel)
+
         if (hasWaypoint && data.latDeg != 0.0) {
             targetHeading = bearingTo(data.latDeg, data.lonDeg, targetLat, targetLon)
             val distNm    = haversineNm(data.latDeg, data.lonDeg, targetLat, targetLon)
@@ -215,12 +234,12 @@ class AutopilotActivity : AppCompatActivity() {
             binding.tvCourseCardinal.text = "%.2f nm".format(distNm)
             binding.tvTargetHeading.text  = "%.0f".format(targetHeading) + "°"
             if (engaged) binding.tvApStatus.text =
-                "✈ WAYPOINT  →  %.0f  (%.2f nm)".format(targetHeading, distNm)
+                "✈ WAYPOINT → %.0f°  (%.2f nm)".format(targetHeading, distNm)
         }
 
         if (engaged && data.hasHeading) {
             val err = headingError(targetHeading, actualHeading)
-            binding.tvHeadingError.text = "%+.0f".format(err)
+            binding.tvHeadingError.text = "%+.0f".format(err) + "°"
         }
     }
 
@@ -246,28 +265,36 @@ class AutopilotActivity : AppCompatActivity() {
     // ── Control loop ──────────────────────────────────────────────────────────
 
     /**
-     * PI heading controller with differential thrust.
+     * PI heading controller with deadband and confidence scaling.
      *
-     * heading_error > 0 → vessel is left of target → need to turn right
-     *   → increase PORT, reduce STBD
-     * heading_error < 0 → vessel is right of target → turn left
-     *   → reduce PORT, increase STBD
+     * Deadband: if |error| < deadbandDeg → no correction (both motors equal).
+     *   Prevents constant micro-corrections from GPS noise on a slow boat.
      *
-     * Integral term eliminates steady-state offset from wind/current.
-     * Anti-windup: integral clamped to ±MAX_INTEGRAL.
+     * Confidence scaling: multiply correction by headingConfidence (0–1).
+     *   headingConfidence = clamp(speedMs / sAcc, 0, 1) from NAV2-SOL.
+     *   When GPS heading is noisy (low speed or high sAcc), correction is reduced.
      */
     private fun runControlStep() {
         if (!hasHeading || !isConnected) return
 
-        val dt    = CONTROL_INTERVAL_MS / 1000f          // seconds per tick
+        val dt    = CONTROL_INTERVAL_MS / 1000f
         val error = headingError(targetHeading, actualHeading)
 
-        // Integrate with anti-windup clamp
+        // Deadband — zero correction inside the band, reset integral to prevent windup
+        if (Math.abs(error) < deadbandDeg) {
+            headingIntegral = 0f
+            sendMotors(baseSpeedPct, baseSpeedPct)
+            updateMotorDisplay(baseSpeedPct, baseSpeedPct, error)
+            return
+        }
+
+        // Integrate with anti-windup
         headingIntegral = (headingIntegral + error * dt)
             .coerceIn(-MAX_INTEGRAL, MAX_INTEGRAL)
 
-        val diff = (error * Kp + headingIntegral * Ki)
-            .toInt().coerceIn(-MAX_DIFF_PCT, MAX_DIFF_PCT)
+        // PI output scaled by heading confidence (from sAcc vs speed ratio)
+        val rawDiff = (error * Kp + headingIntegral * Ki) * headingConfidence
+        val diff    = rawDiff.toInt().coerceIn(-MAX_DIFF_PCT, MAX_DIFF_PCT)
 
         val portPct = (baseSpeedPct + diff).coerceIn(0, 100)
         val stbdPct = (baseSpeedPct - diff).coerceIn(0, 100)
@@ -298,7 +325,21 @@ class AutopilotActivity : AppCompatActivity() {
 
     private fun engage() {
         if (!isConnected) { showToast("Not connected"); return }
-        if (!hasHeading)  { showToast("No heading — waiting for GPS fix"); return }
+
+        // Allow engage with any GPS data — don't require movement.
+        // hasHeading is false when stationary (speed < 0.3kt) but we can still
+        // use the last known heading or the target heading as-is.
+        val gpsData = gpsManager.getCurrentData()
+        if (gpsData.source == GpsManager.Source.NONE) {
+            showToast("No GPS data — check location permission")
+            return
+        }
+        if (!hasHeading) {
+            // Accept engagement with a warning — heading will update once moving
+            showToast("⚠ Low-confidence heading — engage anyway, update when moving")
+            // Use target heading as actual until real heading arrives
+            actualHeading = targetHeading
+        }
 
         engaged = true
         binding.tvApStatus.text = "✈ ENGAGED  →  %.0f".format(targetHeading)
@@ -464,16 +505,17 @@ class AutopilotActivity : AppCompatActivity() {
     private fun setupTuning() {
         updateTuningDisplay()
 
-        binding.btnKpPlus.setOnClickListener  { adjustKp(+KP_STEP) }
-        binding.btnKpMinus.setOnClickListener { adjustKp(-KP_STEP) }
-        binding.btnKiPlus.setOnClickListener  { adjustKi(+KI_STEP) }
-        binding.btnKiMinus.setOnClickListener { adjustKi(-KI_STEP) }
+        binding.btnKpPlus.setOnClickListener        { adjustKp(+KP_STEP) }
+        binding.btnKpMinus.setOnClickListener       { adjustKp(-KP_STEP) }
+        binding.btnKiPlus.setOnClickListener        { adjustKi(+KI_STEP) }
+        binding.btnKiMinus.setOnClickListener       { adjustKi(-KI_STEP) }
+        binding.btnDeadbandPlus.setOnClickListener  { adjustDeadband(+DEADBAND_STEP) }
+        binding.btnDeadbandMinus.setOnClickListener { adjustDeadband(-DEADBAND_STEP) }
 
         binding.btnResetGains.setOnClickListener {
-            Kp = KP_DEFAULT; Ki = KI_DEFAULT
+            Kp = KP_DEFAULT; Ki = KI_DEFAULT; deadbandDeg = DEADBAND_DEFAULT
             headingIntegral = 0f
-            saveGains()
-            updateTuningDisplay()
+            saveGains(); updateTuningDisplay()
             showToast("Gains reset to defaults")
         }
     }
@@ -485,18 +527,29 @@ class AutopilotActivity : AppCompatActivity() {
 
     private fun adjustKi(delta: Float) {
         Ki = (Ki + delta).coerceIn(0.0f, 1.0f)
-        headingIntegral = 0f   // reset integral when Ki changes to avoid sudden jump
+        headingIntegral = 0f
+        saveGains(); updateTuningDisplay()
+    }
+
+    private fun adjustDeadband(delta: Float) {
+        deadbandDeg = (deadbandDeg + delta).coerceIn(0.0f, 15.0f)
+        headingIntegral = 0f   // reset so we don't carry stale integral across band boundary
         saveGains(); updateTuningDisplay()
     }
 
     private fun saveGains() {
-        prefs.edit().putFloat("kp", Kp).putFloat("ki", Ki).apply()
+        prefs.edit()
+            .putFloat("kp", Kp)
+            .putFloat("ki", Ki)
+            .putFloat("deadband", deadbandDeg)
+            .apply()
     }
 
     @SuppressLint("SetTextI18n")
     private fun updateTuningDisplay() {
-        binding.tvKpValue.text = "%.2f".format(Kp)
-        binding.tvKiValue.text = "%.3f".format(Ki)
+        binding.tvKpValue.text        = "%.2f".format(Kp)
+        binding.tvKiValue.text        = "%.3f".format(Ki)
+        binding.tvDeadbandValue.text  = "%.1f".format(deadbandDeg) + "°"
     }
 
     private fun setupBackPress() {

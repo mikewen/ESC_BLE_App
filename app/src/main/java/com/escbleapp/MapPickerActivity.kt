@@ -9,7 +9,9 @@ import androidx.appcompat.app.AppCompatActivity
 import com.escbleapp.databinding.ActivityMapPickerBinding
 import org.osmdroid.config.Configuration
 import org.osmdroid.events.MapEventsReceiver
+import org.osmdroid.tileprovider.tilesource.OnlineTileSourceBase
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
+import org.osmdroid.util.MapTileIndex
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.overlay.MapEventsOverlay
 import org.osmdroid.views.overlay.Marker
@@ -64,33 +66,45 @@ class MapPickerActivity : AppCompatActivity() {
         setupButtons()
     }
 
+    private var isSatellite = false
+
+    // ESRI World Imagery — free satellite tiles, no API key
+    private val ESRI_SATELLITE = object : OnlineTileSourceBase(
+        "ESRI_Satellite", 0, 19, 256, ".jpg",
+        arrayOf("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/")
+    ) {
+        override fun getTileURLString(pMapTileIndex: Long) =
+            "${baseUrl}${MapTileIndex.getZoom(pMapTileIndex)}/${MapTileIndex.getY(pMapTileIndex)}/${MapTileIndex.getX(pMapTileIndex)}.jpg"
+    }
+
     private fun setupMap() {
         val map = binding.mapView
         map.setTileSource(TileSourceFactory.MAPNIK)
         map.setMultiTouchControls(true)
 
-        // Start centred on current location or world view
         val startPoint = if (hasCurrentLoc)
             GeoPoint(currentLat, currentLon) else GeoPoint(0.0, 0.0)
         map.controller.setZoom(if (hasCurrentLoc) 14.0 else 3.0)
         map.controller.setCenter(startPoint)
 
-        // My location overlay
         locationOverlay = MyLocationNewOverlay(GpsMyLocationProvider(this), map).apply {
             enableMyLocation()
-            enableFollowLocation()
         }
         map.overlays.add(locationOverlay)
 
-        // Tap overlay — drop marker where user taps
-        val eventsReceiver = object : MapEventsReceiver {
+        map.overlays.add(MapEventsOverlay(object : MapEventsReceiver {
             override fun singleTapConfirmedHelper(p: GeoPoint): Boolean {
-                placeTargetMarker(p)
-                return true
+                placeTargetMarker(p); return true
             }
             override fun longPressHelper(p: GeoPoint) = false
-        }
-        map.overlays.add(MapEventsOverlay(eventsReceiver))
+        }))
+    }
+
+    private fun toggleSatellite() {
+        isSatellite = !isSatellite
+        binding.mapView.setTileSource(if (isSatellite) ESRI_SATELLITE else TileSourceFactory.MAPNIK)
+        binding.mapView.invalidate()
+        binding.btnMapLayer.text = if (isSatellite) "🗺 MAP" else "🛰 SAT"
     }
 
     @SuppressLint("SetTextI18n")
@@ -130,10 +144,8 @@ class MapPickerActivity : AppCompatActivity() {
     }
 
     private fun setupButtons() {
-        binding.btnMapCancel.setOnClickListener {
-            setResult(RESULT_CANCELED)
-            finish()
-        }
+        binding.btnMapCancel.setOnClickListener { setResult(RESULT_CANCELED); finish() }
+        binding.btnMapLayer.setOnClickListener  { toggleSatellite() }
 
         binding.btnMapConfirm.setOnClickListener {
             val pt = targetGeoPoint ?: return@setOnClickListener

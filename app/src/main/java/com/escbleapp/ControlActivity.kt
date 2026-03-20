@@ -486,11 +486,13 @@ class ControlActivity : AppCompatActivity() {
             binding.tvAe02.text = "ae02: $hex"
         }}
 
-        gpsManager.onLogStatus = { msg -> runOnUiThread {
-            showToast(msg)
-        }}
+        gpsManager.onLogStatus = { msg -> runOnUiThread { showToast(msg) } }
 
-        // Speed unit toggle
+        // Show permission state immediately
+        val hasPerm = gpsManager.hasLocationPermission()
+        binding.tvGpsStatus.text = if (hasPerm) "GPS: permission OK, starting…"
+        else "GPS: ⚠ NO PERMISSION — tap to fix"
+
         binding.btnSpeedUnit.setOnClickListener {
             speedUnitKnots = !speedUnitKnots
             binding.btnSpeedUnit.text = if (speedUnitKnots) "kt" else "km/h"
@@ -498,7 +500,6 @@ class ControlActivity : AppCompatActivity() {
             updateGpsUi(gpsManager.getCurrentData())
         }
 
-        // GPS source toggle
         binding.btnGpsSource.setOnClickListener {
             val preferBle = binding.btnGpsSource.text == "BLE"
             if (preferBle) {
@@ -512,7 +513,6 @@ class ControlActivity : AppCompatActivity() {
             }
         }
 
-        // GPS log toggle — ⏺ red when recording, dim when stopped
         binding.btnGpsLog.setOnClickListener {
             if (gpsManager.isLogging) {
                 gpsManager.stopLogging()
@@ -530,7 +530,6 @@ class ControlActivity : AppCompatActivity() {
             }
         }
 
-        // Reset trip stats
         binding.btnResetTrip.setOnClickListener {
             gpsManager.resetTrip()
             binding.tvTripDistance.text = "0.0"
@@ -551,14 +550,16 @@ class ControlActivity : AppCompatActivity() {
 
     @SuppressLint("SetTextI18n")
     private fun updateGpsUi(data: GpsManager.GpsData) {
-        // Speed
-        val speedStr = if (!data.hasFix) "—"
-        else if (speedUnitKnots) "%.1f".format(data.speedKnots)
+        // Speed — always show value, dim color when accuracy is poor
+        val speedStr = if (speedUnitKnots) "%.1f".format(data.speedKnots)
         else "%.1f".format(data.speedKmh)
         binding.tvSpeed.text = speedStr
         binding.tvSpeed.setTextColor(
-            if (data.hasFix) android.graphics.Color.parseColor("#14FFEC")
-            else             android.graphics.Color.parseColor("#334455")
+            when {
+                data.hasFix  -> android.graphics.Color.parseColor("#14FFEC")  // good fix
+                data.source != GpsManager.Source.NONE -> android.graphics.Color.parseColor("#557766") // weak fix
+                else -> android.graphics.Color.parseColor("#334455")          // no data
+            }
         )
 
         // Heading
@@ -568,6 +569,13 @@ class ControlActivity : AppCompatActivity() {
         // Compass
         binding.compassView.headingDeg = data.headingDeg
         binding.compassView.hasFix     = data.hasFix
+
+        // GPS diagnostic status line
+        binding.tvGpsStatus.text = when {
+            data.source == GpsManager.Source.NONE -> "GPS: no data — check Settings → Location"
+            !data.hasFix -> "GPS: weak signal (acc>200m) — move outdoors"
+            else -> "GPS: fix OK · acc<200m"
+        }
 
         // Source icon
         binding.tvGpsSource.text = when (data.source) {
