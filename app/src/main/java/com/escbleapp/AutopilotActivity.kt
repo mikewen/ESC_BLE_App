@@ -213,19 +213,29 @@ class AutopilotActivity : AppCompatActivity() {
 
     @SuppressLint("SetTextI18n")
     private fun onGpsUpdate(data: GpsManager.GpsData) {
-        // Always update heading/confidence from any GPS data — don't block on hasFix
         actualHeading     = data.headingDeg
         hasHeading        = data.hasHeading
         headingConfidence = data.headingConfidence
 
+        // ── #3 Auto deadband from sea state ──────────────────────────────────
+        val fusionState  = gpsManager.fusion.getState()
+        val seaState     = fusionState.seaState
+        val autoDeadband = fusionState.autoDeadbandDeg
+        // Only override manual deadband if user hasn't recently adjusted it
+        // (sea state deadband is additive over base, so just update directly)
+        deadbandDeg = autoDeadband
+        binding.tvDeadbandValue.text = "%.1f".format(deadbandDeg) + "°"
+
         binding.apCompassView.headingDeg = actualHeading
         binding.apCompassView.hasFix     = data.hasFix
 
-        // Show fix quality in the speed line
-        val confPct  = (headingConfidence * 100).toInt()
-        val fixLabel = if (data.hasFix) "" else " ⚠no fix"
+        val confPct   = (headingConfidence * 100).toInt()
+        val fixLabel  = if (data.hasFix) "" else " ⚠"
+        val calLabel  = if (fusionState.magCalibrated) " 🧭cal" else ""
+        val seaLabel  = "sea:${"%.0f".format(seaState * 100)}%"
         binding.tvActualHeading.text = if (data.hasHeading) "%.0f".format(actualHeading) + "°" else "—°"
-        binding.tvApSpeed.text = "%.1f kt  conf:%d%%%s".format(data.speedKnots, confPct, fixLabel)
+        binding.tvApSpeed.text = "%.1f kt  c:%d%%%s%s  %s".format(
+            data.speedKnots, confPct, fixLabel, calLabel, seaLabel)
 
         if (hasWaypoint && data.latDeg != 0.0) {
             targetHeading = bearingTo(data.latDeg, data.lonDeg, targetLat, targetLon)

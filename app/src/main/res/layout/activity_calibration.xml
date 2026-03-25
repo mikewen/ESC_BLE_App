@@ -1,0 +1,142 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent" android:layout_height="match_parent"
+    android:background="#070D1A">
+
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="vertical" android:padding="12dp">
+
+        <!-- Title bar -->
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="horizontal" android:gravity="center_vertical"
+            android:layout_marginBottom="16dp">
+            <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                android:layout_weight="1" android:text="SENSOR CALIBRATION"
+                android:textColor="#14FFEC" android:textSize="16sp" android:textStyle="bold"
+                android:fontFamily="monospace"/>
+            <Button android:id="@+id/btnBack"
+                android:layout_width="wrap_content" android:layout_height="36dp"
+                android:text="← BACK" android:textSize="12sp"
+                android:backgroundTint="#1A2030" android:textColor="#88AABBCC"
+                style="@style/Widget.MaterialComponents.Button"/>
+        </LinearLayout>
+
+        <!-- ── MMC5603 Magnetometer Calibration ── -->
+        <androidx.cardview.widget.CardView android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:layout_marginBottom="12dp"
+            app:cardBackgroundColor="#080F1E" app:cardCornerRadius="10dp">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="vertical" android:padding="14dp">
+
+                <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:text="MMC5603 MAGNETOMETER" android:textColor="#14FFEC"
+                    android:textSize="13sp" android:textStyle="bold"
+                    android:fontFamily="monospace" android:layout_marginBottom="4dp"/>
+
+                <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:text="Rotate boat slowly 360° in calm water at the dock."
+                    android:textColor="#88AABBCC" android:textSize="12sp"
+                    android:layout_marginBottom="12dp"/>
+
+                <!-- Progress ring (ProgressBar horizontal as fill indicator) -->
+                <ProgressBar android:id="@+id/progressMagCal"
+                    style="?android:attr/progressBarStyleHorizontal"
+                    android:layout_width="match_parent" android:layout_height="18dp"
+                    android:max="100" android:progress="0"
+                    android:progressTint="#14FFEC" android:progressBackgroundTint="#1A2E4A"
+                    android:layout_marginBottom="8dp"/>
+
+                <TextView android:id="@+id/tvMagCalStatus"
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:text="Tap START then rotate boat 360°"
+                    android:textColor="#88CCFF" android:textSize="12sp"
+                    android:fontFamily="monospace" android:layout_marginBottom="4dp"/>
+
+                <TextView android:id="@+id/tvMagCalSaved"
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:text="Not calibrated"
+                    android:textColor="#55AABBCC" android:textSize="11sp"
+                    android:fontFamily="monospace" android:layout_marginBottom="12dp"/>
+
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal">
+                    <Button android:id="@+id/btnMagCalStart"
+                        android:layout_width="0dp" android:layout_height="44dp"
+                        android:layout_weight="1" android:text="▶ START"
+                        android:textSize="13sp" android:textStyle="bold"
+                        android:backgroundTint="#0D3A2A" android:textColor="#14FFEC"
+                        android:layout_marginEnd="6dp"
+                        style="@style/Widget.MaterialComponents.Button"/>
+                    <Button android:id="@+id/btnMagCalFinish"
+                        android:layout_width="0dp" android:layout_height="44dp"
+                        android:layout_weight="1" android:text="✓ DONE"
+                        android:textSize="13sp" android:textStyle="bold"
+                        android:backgroundTint="#1A3A2A" android:textColor="#88FFCC88"
+                        android:layout_marginEnd="6dp"
+                        style="@style/Widget.MaterialComponents.Button"/>
+                    <Button android:id="@+id/btnMagCalClear"
+                        android:layout_width="wrap_content" android:layout_height="44dp"
+                        android:text="CLR" android:textSize="11sp"
+                        android:backgroundTint="#1A0A0A" android:textColor="#884444"
+                        style="@style/Widget.MaterialComponents.Button"/>
+                </LinearLayout>
+            </LinearLayout>
+        </androidx.cardview.widget.CardView>
+
+        <!-- ── QMI8658C Gyro Bias Calibration ── -->
+        <androidx.cardview.widget.CardView android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:layout_marginBottom="12dp"
+            app:cardBackgroundColor="#080F1E" app:cardCornerRadius="10dp">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="vertical" android:padding="14dp">
+
+                <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:text="QMI8658C GYRO BIAS" android:textColor="#FFB300"
+                    android:textSize="13sp" android:textStyle="bold"
+                    android:fontFamily="monospace" android:layout_marginBottom="4dp"/>
+
+                <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:text="Place sensor on a level surface and hold completely still for 5 seconds."
+                    android:textColor="#88AABBCC" android:textSize="12sp"
+                    android:layout_marginBottom="12dp"/>
+
+                <TextView android:id="@+id/tvGyroCalStatus"
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:text="Place on level surface and tap START"
+                    android:textColor="#FFB300" android:textSize="12sp"
+                    android:fontFamily="monospace" android:layout_marginBottom="4dp"/>
+
+                <TextView android:id="@+id/tvGyroCalSaved"
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:text="Not calibrated"
+                    android:textColor="#55AABBCC" android:textSize="11sp"
+                    android:fontFamily="monospace" android:layout_marginBottom="12dp"/>
+
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal">
+                    <Button android:id="@+id/btnGyroCalStart"
+                        android:layout_width="0dp" android:layout_height="44dp"
+                        android:layout_weight="1" android:text="▶ START (5s)"
+                        android:textSize="13sp" android:textStyle="bold"
+                        android:backgroundTint="#2A2000" android:textColor="#FFB300"
+                        android:layout_marginEnd="6dp"
+                        style="@style/Widget.MaterialComponents.Button"/>
+                    <Button android:id="@+id/btnGyroCalClear"
+                        android:layout_width="wrap_content" android:layout_height="44dp"
+                        android:text="CLR" android:textSize="11sp"
+                        android:backgroundTint="#1A0A0A" android:textColor="#884444"
+                        style="@style/Widget.MaterialComponents.Button"/>
+                </LinearLayout>
+            </LinearLayout>
+        </androidx.cardview.widget.CardView>
+
+        <!-- Notes -->
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:text="• Mag cal: do once at dock, redo if you move metal objects near the sensor.\n• Gyro cal: redo if the sensor temperature changes significantly.\n• GPS auto-cal runs automatically when speed > 2kt in calm sea."
+            android:textColor="#44AABBCC" android:textSize="11sp"
+            android:fontFamily="monospace" android:lineSpacingExtra="4dp"
+            android:layout_marginTop="4dp"/>
+
+    </LinearLayout>
+</ScrollView>

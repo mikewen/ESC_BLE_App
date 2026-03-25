@@ -75,6 +75,12 @@ class GpsManager(private val context: Context) {
 
     val fusion = SensorFusion()
 
+    init {
+        // Load saved calibration offsets (mag hard-iron, gyro bias)
+        val calPrefs = context.getSharedPreferences("calibration_prefs", Context.MODE_PRIVATE)
+        CalibrationActivity.loadCalibration(calPrefs, fusion)
+    }
+
     private var currentData  = GpsData()
     private var currentSource = Source.NONE
 
@@ -246,46 +252,82 @@ class GpsManager(private val context: Context) {
     }
 
     // ── AC6329C packet parser ─────────────────────────────────────────────────
+    //
+    // 0xA1 — IMU+Mag raw (20 bytes, existing format)
+    // 0xA2 — PQTMTAR orientation (17 bytes):
+    //   [0]     0xA2
+    //   [1-4]   timeMs     uint32 LE
+    //   [5]     quality    uint8  (GNSS status: 0/4/6)
+    //   [6-7]   reserved   (bytes 6,7 — skipped per firmware)
+    //   [8-9]   pitch      int16 LE × 0.01°
+    //   [10-11] roll       int16 LE × 0.01°
+    //   [12-13] heading    uint16 LE × 0.01° (unsigned 0–36000)
+    //   [14-15] acc_hdg    uint16 LE × 0.001°
+    //   [16]    usedSV     uint8
+    //
+    // 0xA3 — GNRMC position (17 bytes):
+    //   [0]     0xA3
+    //   [1-4]   timeMs     uint32 LE
+    //   [5-8]   rawLat     int32 LE — NMEA lat × 10000 (DDMM.MMMM format)
+    //   [9-12]  rawLon     int32 LE — NMEA lon × 10000 (DDDMM.MMMM format)
+    //   [13-14] speedKt    uint16 LE × 0.01 kt
+    //   [15-16] course     uint16 LE × 0.01°
 
     private fun parseAcPacket(b: ByteArray) {
+        val buf = java.nio.ByteBuffer.wrap(b).order(java.nio.ByteOrder.LITTLE_ENDIAN)
         when (b[0]) {
             0xA1.toByte() -> {
                 if (b.size < 20) return
-                val seq  = b[1].toInt() and 0xFF
-                val ax   = getI2(b, 2);  val ay = getI2(b, 4);  val az = getI2(b, 6)
-                val gx   = getI2(b, 8);  val gy = getI2(b, 10); val gz = getI2(b, 12)
-                val mx   = getI2(b, 14); val my = getI2(b, 16); val mz = getI2(b, 18)
+                val seq = b[1].toInt() and 0xFF
+                val ax  = getI2(b, 2);  val ay = getI2(b, 4);  val az = getI2(b, 6)
+                val gx  = getI2(b, 8);  val gy = getI2(b, 10); val gz = getI2(b, 12)
+                val mx  = getI2(b, 14); val my = getI2(b, 16); val mz = getI2(b, 18)
                 fusion.processA1(ax, ay, az, gx, gy, gz, mx, my, mz, System.currentTimeMillis())
             }
             0xA2.toByte() -> {
-                if (b.size < 14) return
-                val tarHdg  = getU2(b, 1) / 100f
-                val rmcHdg  = getU2(b, 3) / 100f
-                val rmcSpd  = getU2(b, 5) / 100f
-                val tarAcc  = b[7].toInt() and 0xFF
-                val quality = b[8].toInt() and 0xFF
-                val sats    = b[13].toInt() and 0xFF
+                if (b.size < 17) return
+                // val timeMs  = buf.getInt(1).toLong() and 0xFFFFFFFFL  // not used in fusion
+                val quality    = b[5].toInt() and 0xFF
+                val pitch      = buf.getShort(8)  / 100.0f
+                val roll       = buf.getShort(10) / 100.0f
+                val heading    = (buf.getShort(12).toInt() and 0xFFFF) / 100.0f
+                val accHeading = (buf.getShort(14).toInt() and 0xFFFF) / 1000.0f
+                val usedSV     = b[16].toInt() and 0xFF
+                Log.d("GpsManager", "A2: hdg=$heading acc=$accHeading qual=$quality sv=$usedSV")
                 fusion.processA2(
-                    tarHeadingDeg = tarHdg,
-                    rmcHeadingDeg = rmcHdg,
-                    speedKt       = rmcSpd,
-                    tarAccDeg     = tarAcc,
-                    gnssQuality   = quality and 0x03,
-                    rmcValid      = (quality and 0x08) != 0,
-                    satellites    = sats,
+                    tarHeadingDeg = heading,
+                    pitchDeg      = pitch,
+                    rollDeg       = roll,
+                    tarAccDeg     = accHeading,
+                    gnssQuality   = quality,
+                    satellites    = usedSV,
                     nowMs         = System.currentTimeMillis()
                 )
             }
             0xA3.toByte() -> {
-                if (b.size < 15) return
-                val lat = getI4(b, 1) / 1e7
-                val lon = getI4(b, 5) / 1e7
-                val spd = getU2(b, 9) / 100f
-                val sat = b[13].toInt() and 0xFF
-                val fix = b[14].toInt() and 0xFF
-                fusion.processA3(lat, lon, spd, sat, fix)
+                if (b.size < 17) return
+                // val timeMs = buf.getInt(1).toLong() and 0xFFFFFFFFL  // not used in fusion
+                val rawLat   = buf.getInt(5)  / 10000.0f
+                val rawLon   = buf.getInt(9)  / 10000.0f
+                val speedKt  = (buf.getShort(13).toInt() and 0xFFFF) / 100.0f
+                val course   = (buf.getShort(15).toInt() and 0xFFFF) / 100.0f
+                val lat      = convertNmeaToDecimal(rawLat)
+                val lon      = convertNmeaToDecimal(rawLon)
+                val hasFix   = rawLat != 0f || rawLon != 0f   // non-zero = valid position
+                Log.d("GpsManager", "A3: lat=${"%.6f".format(lat)} lon=${"%.6f".format(lon)} spd=$speedKt cog=$course")
+                fusion.processA3(lat, lon, speedKt, course, hasFix)
             }
         }
+    }
+
+    /**
+     * Convert NMEA coordinate format (DDMM.MMMM) to decimal degrees.
+     * Input is the NMEA value already divided by 10000 (i.e. rawLat = DDMM.MMMM as float).
+     */
+    private fun convertNmeaToDecimal(nmea: Float): Double {
+        val degrees = (nmea / 100).toInt()
+        val minutes = nmea - degrees * 100f
+        return degrees + minutes / 60.0
     }
 
     // ── CASIC NAV2-SOL parser ─────────────────────────────────────────────────

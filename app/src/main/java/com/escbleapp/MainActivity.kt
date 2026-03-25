@@ -85,7 +85,10 @@ class MainActivity : AppCompatActivity() {
             if (scanning) stopScan() else checkPermissionsAndScan()
         }
 
-        // Filter toggle
+        binding.btnCalibrate.setOnClickListener {
+            startActivity(android.content.Intent(this, CalibrationActivity::class.java))
+        }
+
         binding.chipFilterEsc.setOnCheckedChangeListener { _, _ -> /* filter applied in callback */ }
     }
 
