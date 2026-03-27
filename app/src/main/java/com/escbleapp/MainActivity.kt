@@ -152,7 +152,7 @@ class MainActivity : AppCompatActivity() {
         scanning = false
         handler.removeCallbacksAndMessages(null)
         bleScanner?.stopScan(scanCallback)
-        binding.btnScan.text = "Scan for ESC_PWM"
+        binding.btnScan.text = "Scan [ESC|BLDC|GPS|IMU]_PWM"
         binding.progressBar.visibility = View.GONE
         if (devices.isEmpty()) binding.tvEmpty.visibility = View.VISIBLE
         Log.d(TAG, "BLE scan stopped")
@@ -175,11 +175,14 @@ class MainActivity : AppCompatActivity() {
             seenAddresses.add(address)
 
             val name = device.name ?: result.scanRecord?.deviceName ?: "Unknown"
-            // Show all devices if filter chip unchecked, else only ESC_PWM/BLDC_PWM
+            // Show all devices if filter chip unchecked, else only ESC_PWM/BLDC_PWM/GPS_PWM
             if (binding.chipFilterEsc.isChecked &&
                 !name.contains("ESC_PWM", true) &&
                 !name.contains("BLDC_PWM", true) &&
-                !name.contains("AC6328", true)) {
+                !name.contains("GPS_PWM", true) &&
+                !name.contains("IMU_PWM", true) &&
+                !name.contains("AC6328", true) &&
+                !name.contains("AC6329", true)) {
                 return
             }
 

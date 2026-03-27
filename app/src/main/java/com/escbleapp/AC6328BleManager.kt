@@ -36,7 +36,12 @@ class AC6328BleManager(context: Context) : BleManager(context) {
     companion object {
         private const val TAG = "AC6328"
 
-        val SERVICE_UUID   = UUID.fromString("0000ae00-0000-1000-8000-00805f9b34fb")
+        // Two service variants — try both
+        val SERVICE_AE00_UUID = UUID.fromString("0000ae00-0000-1000-8000-00805f9b34fb")
+        val SERVICE_AE30_UUID = UUID.fromString("0000ae30-0000-1000-8000-00805f9b34fb")
+        // Keep the original name as alias so existing code compiles
+        val SERVICE_UUID = SERVICE_AE00_UUID
+
         val CHAR_AE03_UUID = UUID.fromString("0000ae03-0000-1000-8000-00805f9b34fb")
         val CHAR_AE02_UUID = UUID.fromString("0000ae02-0000-1000-8000-00805f9b34fb")
         val CHAR_AE10_UUID = UUID.fromString("0000ae10-0000-1000-8000-00805f9b34fb")
@@ -76,7 +81,15 @@ class AC6328BleManager(context: Context) : BleManager(context) {
     private inner class AC6328GattCallback : BleManagerGattCallback() {
 
         override fun isRequiredServiceSupported(gatt: BluetoothGatt): Boolean {
-            val svc = gatt.getService(SERVICE_UUID) ?: return false
+            // Accept either ae00 or ae30 service
+            val svc = gatt.getService(SERVICE_AE00_UUID)
+                ?: gatt.getService(SERVICE_AE30_UUID)
+                ?: run {
+                    //Log.w(TAG, "Neither ae00 nor ae30 service found")
+                    return false
+                }
+            //Log.i(TAG, "Service found: ${svc.uuid}")
+
             charAe03 = svc.getCharacteristic(CHAR_AE03_UUID)
             charAe02 = svc.getCharacteristic(CHAR_AE02_UUID)
             charAe10 = svc.getCharacteristic(CHAR_AE10_UUID)

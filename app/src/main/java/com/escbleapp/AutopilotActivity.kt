@@ -69,9 +69,11 @@ class AutopilotActivity : AppCompatActivity() {
 
     private var Kp              = KP_DEFAULT
     private var Ki              = KI_DEFAULT
-    private var deadbandDeg     = DEADBAND_DEFAULT
+    private var baseDeadbandDeg = DEADBAND_DEFAULT  // user-set base, saved to prefs
+    private var deadbandDeg     = DEADBAND_DEFAULT  // effective = base + sea state addition
+    private var autoDeadbandEnabled = true          // sea state adds to DB when true
     private var headingIntegral = 0f
-    private var headingConfidence = 1f   // 0–1 from GPS sAcc, scales correction output
+    private var headingConfidence = 1f
 
     private lateinit var prefs: SharedPreferences
 
@@ -137,7 +139,8 @@ class AutopilotActivity : AppCompatActivity() {
         prefs       = getSharedPreferences("autopilot_prefs", Context.MODE_PRIVATE)
         Kp          = prefs.getFloat("kp", KP_DEFAULT)
         Ki          = prefs.getFloat("ki", KI_DEFAULT)
-        deadbandDeg = prefs.getFloat("deadband", DEADBAND_DEFAULT)
+        baseDeadbandDeg = prefs.getFloat("deadband", DEADBAND_DEFAULT)
+        deadbandDeg = baseDeadbandDeg
 
         binding.tvApDeviceName.text = deviceName
 
@@ -205,6 +208,7 @@ class AutopilotActivity : AppCompatActivity() {
 
     private fun setupGps() {
         gpsManager = GpsManager(this)
+        gpsManager.accelRotated180 = true   // QMI8658C ax/ay flipped 180° vs MMC5603 on this PCB
         gpsManager.onUpdate = { data -> runOnUiThread { onGpsUpdate(data) } }
 
         if (gpsManager.hasLocationPermission()) gpsManager.startPhoneGps()
@@ -217,25 +221,38 @@ class AutopilotActivity : AppCompatActivity() {
         hasHeading        = data.hasHeading
         headingConfidence = data.headingConfidence
 
-        // ── #3 Auto deadband from sea state ──────────────────────────────────
+        // Auto deadband: base + sea state addition (only when toggle is on)
         val fusionState  = gpsManager.fusion.getState()
         val seaState     = fusionState.seaState
-        val autoDeadband = fusionState.autoDeadbandDeg
-        // Only override manual deadband if user hasn't recently adjusted it
-        // (sea state deadband is additive over base, so just update directly)
-        deadbandDeg = autoDeadband
-        binding.tvDeadbandValue.text = "%.1f".format(deadbandDeg) + "°"
+        deadbandDeg = if (autoDeadbandEnabled)
+            (baseDeadbandDeg + seaState * 8f).coerceIn(0f, 15f)
+        else baseDeadbandDeg
+        binding.tvDeadbandValue.text = "%.1f".format(baseDeadbandDeg) + "°" +
+                if (autoDeadbandEnabled && seaState > 0.05f) "(+${"%.1f".format(deadbandDeg - baseDeadbandDeg)}°)" else ""
+
+        // Speed — update both the small label and the new big display
+        val speedStr = "%.1f kt".format(data.speedKnots)
+        binding.tvApSpeed.text    = speedStr
+        binding.tvApSpeedBig.text = speedStr
+
+        // Mag heading from SensorFusion (from MMC5603 tilt-compensated)
+        // Derived from processA1 — shows raw magnetic heading before GNSS correction
+        val magHdg = fusionState.headingDeg   // closest available; raw mag shown in logcat
+        //binding.tvMagHeading.text = if (fusionState.hasHeading)"%.0f°".format(magHdg) else "—°"
+        binding.tvMagHeading.text = "%.0f°".format(magHdg)
 
         binding.apCompassView.headingDeg = actualHeading
         binding.apCompassView.hasFix     = data.hasFix
 
         val confPct   = (headingConfidence * 100).toInt()
         val fixLabel  = if (data.hasFix) "" else " ⚠"
-        val calLabel  = if (fusionState.magCalibrated) " 🧭cal" else ""
+        val calLabel     = if (fusionState.magCalibrated) " 🧭cal" else ""
+        val misalLabel   = if (fusionState.tarMisalignCalibrated)
+            " ⊾${"%.1f".format(fusionState.tarMisalignDeg)}°" else ""
         val seaLabel  = "sea:${"%.0f".format(seaState * 100)}%"
         binding.tvActualHeading.text = if (data.hasHeading) "%.0f".format(actualHeading) + "°" else "—°"
-        binding.tvApSpeed.text = "%.1f kt  c:%d%%%s%s  %s".format(
-            data.speedKnots, confPct, fixLabel, calLabel, seaLabel)
+        binding.tvApSpeed.text = "%.1f kt  c:%d%%%s%s%s  %s".format(
+            data.speedKnots, confPct, fixLabel, calLabel, misalLabel, seaLabel)
 
         if (hasWaypoint && data.latDeg != 0.0) {
             targetHeading = bearingTo(data.latDeg, data.lonDeg, targetLat, targetLon)
@@ -515,6 +532,15 @@ class AutopilotActivity : AppCompatActivity() {
     private fun setupTuning() {
         updateTuningDisplay()
 
+        binding.switchAutoDeadband.isChecked = autoDeadbandEnabled
+        binding.switchAutoDeadband.setOnCheckedChangeListener { _, checked ->
+            autoDeadbandEnabled = checked
+            if (!checked) {
+                deadbandDeg = baseDeadbandDeg   // snap back to base immediately
+                updateTuningDisplay()
+            }
+        }
+
         binding.btnKpPlus.setOnClickListener        { adjustKp(+KP_STEP) }
         binding.btnKpMinus.setOnClickListener       { adjustKp(-KP_STEP) }
         binding.btnKiPlus.setOnClickListener        { adjustKi(+KI_STEP) }
@@ -523,7 +549,8 @@ class AutopilotActivity : AppCompatActivity() {
         binding.btnDeadbandMinus.setOnClickListener { adjustDeadband(-DEADBAND_STEP) }
 
         binding.btnResetGains.setOnClickListener {
-            Kp = KP_DEFAULT; Ki = KI_DEFAULT; deadbandDeg = DEADBAND_DEFAULT
+            Kp = KP_DEFAULT; Ki = KI_DEFAULT; baseDeadbandDeg = DEADBAND_DEFAULT
+            deadbandDeg = DEADBAND_DEFAULT
             headingIntegral = 0f
             saveGains(); updateTuningDisplay()
             showToast("Gains reset to defaults")
@@ -542,8 +569,9 @@ class AutopilotActivity : AppCompatActivity() {
     }
 
     private fun adjustDeadband(delta: Float) {
-        deadbandDeg = (deadbandDeg + delta).coerceIn(0.0f, 15.0f)
-        headingIntegral = 0f   // reset so we don't carry stale integral across band boundary
+        // Adjust the base deadband — sea state adds on top of this at runtime
+        baseDeadbandDeg = (baseDeadbandDeg + delta).coerceIn(0.0f, 15.0f)
+        headingIntegral = 0f
         saveGains(); updateTuningDisplay()
     }
 
@@ -551,15 +579,20 @@ class AutopilotActivity : AppCompatActivity() {
         prefs.edit()
             .putFloat("kp", Kp)
             .putFloat("ki", Ki)
-            .putFloat("deadband", deadbandDeg)
+            .putFloat("deadband", baseDeadbandDeg)
             .apply()
     }
 
     @SuppressLint("SetTextI18n")
     private fun updateTuningDisplay() {
-        binding.tvKpValue.text        = "%.2f".format(Kp)
-        binding.tvKiValue.text        = "%.3f".format(Ki)
-        binding.tvDeadbandValue.text  = "%.1f".format(deadbandDeg) + "°"
+        binding.tvKpValue.text       = "%.2f".format(Kp)
+        binding.tvKiValue.text       = "%.3f".format(Ki)
+        // Show base + effective: "3.0° (+2.1°sea)"
+        val seaAdd = deadbandDeg - baseDeadbandDeg
+        binding.tvDeadbandValue.text = if (seaAdd > 0.1f)
+            "%.1f°(+%.1f°)".format(baseDeadbandDeg, seaAdd)
+        else
+            "%.1f".format(baseDeadbandDeg) + "°"
     }
 
     private fun setupBackPress() {

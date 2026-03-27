@@ -10,7 +10,7 @@
         <!-- Title bar -->
         <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
             android:orientation="horizontal" android:gravity="center_vertical"
-            android:layout_marginBottom="16dp">
+            android:layout_marginBottom="12dp">
             <TextView android:layout_width="0dp" android:layout_height="wrap_content"
                 android:layout_weight="1" android:text="SENSOR CALIBRATION"
                 android:textColor="#14FFEC" android:textSize="16sp" android:textStyle="bold"
@@ -21,6 +21,43 @@
                 android:backgroundTint="#1A2030" android:textColor="#88AABBCC"
                 style="@style/Widget.MaterialComponents.Button"/>
         </LinearLayout>
+
+        <!-- ── BLE Connection ── -->
+        <androidx.cardview.widget.CardView android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:layout_marginBottom="12dp"
+            app:cardBackgroundColor="#080F1E" app:cardCornerRadius="10dp">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="vertical" android:padding="14dp">
+
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical"
+                    android:layout_marginBottom="8dp">
+                    <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:text="SENSOR DEVICE"
+                        android:textColor="#14FFEC" android:textSize="13sp"
+                        android:textStyle="bold" android:fontFamily="monospace"/>
+                    <Button android:id="@+id/btnBleScan"
+                        android:layout_width="wrap_content" android:layout_height="36dp"
+                        android:text="SCAN" android:textSize="12sp" android:textStyle="bold"
+                        android:backgroundTint="#0D3A2A" android:textColor="#14FFEC"
+                        style="@style/Widget.MaterialComponents.Button"/>
+                </LinearLayout>
+
+                <TextView android:id="@+id/tvBleStatus"
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:text="Tap SCAN to connect sensor"
+                    android:textColor="#88CCFF" android:textSize="12sp"
+                    android:fontFamily="monospace"/>
+
+                <!-- Scan results — hidden until scan starts -->
+                <TextView android:id="@+id/tvScanResults"
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:text="" android:textColor="#55AABBCC"
+                    android:textSize="11sp" android:fontFamily="monospace"
+                    android:layout_marginTop="4dp" android:visibility="gone"/>
+
+            </LinearLayout>
+        </androidx.cardview.widget.CardView>
 
         <!-- ── MMC5603 Magnetometer Calibration ── -->
         <androidx.cardview.widget.CardView android:layout_width="match_parent"
@@ -39,7 +76,6 @@
                     android:textColor="#88AABBCC" android:textSize="12sp"
                     android:layout_marginBottom="12dp"/>
 
-                <!-- Progress ring (ProgressBar horizontal as fill indicator) -->
                 <ProgressBar android:id="@+id/progressMagCal"
                     style="?android:attr/progressBarStyleHorizontal"
                     android:layout_width="match_parent" android:layout_height="18dp"
@@ -49,7 +85,7 @@
 
                 <TextView android:id="@+id/tvMagCalStatus"
                     android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:text="Tap START then rotate boat 360°"
+                    android:text="Connect sensor then tap START"
                     android:textColor="#88CCFF" android:textSize="12sp"
                     android:fontFamily="monospace" android:layout_marginBottom="4dp"/>
 
@@ -97,13 +133,13 @@
                     android:fontFamily="monospace" android:layout_marginBottom="4dp"/>
 
                 <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:text="Place sensor on a level surface and hold completely still for 5 seconds."
+                    android:text="Place sensor on a level surface and hold still for 5 seconds."
                     android:textColor="#88AABBCC" android:textSize="12sp"
                     android:layout_marginBottom="12dp"/>
 
                 <TextView android:id="@+id/tvGyroCalStatus"
                     android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:text="Place on level surface and tap START"
+                    android:text="Connect sensor then tap START"
                     android:textColor="#FFB300" android:textSize="12sp"
                     android:fontFamily="monospace" android:layout_marginBottom="4dp"/>
 
@@ -133,7 +169,7 @@
 
         <!-- Notes -->
         <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:text="• Mag cal: do once at dock, redo if you move metal objects near the sensor.\n• Gyro cal: redo if the sensor temperature changes significantly.\n• GPS auto-cal runs automatically when speed > 2kt in calm sea."
+            android:text="• Mag cal: rotate once at dock. Redo if metal moves near sensor.\n• Gyro cal: redo if temperature changes significantly.\n• GPS auto-cal runs automatically at sea (speed>2kt, calm).\n• Disconnect after calibration — motor control uses a separate connection."
             android:textColor="#44AABBCC" android:textSize="11sp"
             android:fontFamily="monospace" android:lineSpacingExtra="4dp"
             android:layout_marginTop="4dp"/>

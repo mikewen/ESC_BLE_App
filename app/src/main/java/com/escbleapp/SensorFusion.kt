@@ -43,20 +43,22 @@ class SensorFusion {
     // ── State ─────────────────────────────────────────────────────────────────
 
     data class FusedState(
-        val headingDeg:       Float   = 0f,
-        val speedKnots:       Float   = 0f,
-        val latDeg:           Double  = 0.0,
-        val lonDeg:           Double  = 0.0,
-        val altM:             Float   = 0f,
-        val hasHeading:       Boolean = false,
-        val hasFix:           Boolean = false,
-        val satellites:       Int     = 0,
-        val headingConf:      Float   = 0f,    // 0.0 = unreliable … 1.0 = fully trusted
-        val seaState:         Float   = 0f,    // 0 = calm … 1 = rough
-        val autoDeadbandDeg:  Float   = 2f,    // #3: deadband adjusted for sea state
-        val magCalibrated:    Boolean = false, // #2: GPS auto-cal complete
-        val source:           String  = "none",
-        val debugMsg:         String  = "",
+        val headingDeg:           Float   = 0f,
+        val speedKnots:           Float   = 0f,
+        val latDeg:               Double  = 0.0,
+        val lonDeg:               Double  = 0.0,
+        val altM:                 Float   = 0f,
+        val hasHeading:           Boolean = false,
+        val hasFix:               Boolean = false,
+        val satellites:           Int     = 0,
+        val headingConf:          Float   = 0f,    // 0.0 = unreliable … 1.0 = fully trusted
+        val seaState:             Float   = 0f,    // 0 = calm … 1 = rough
+        val autoDeadbandDeg:      Float   = 2f,    // deadband adjusted for sea state
+        val magCalibrated:        Boolean = false, // GPS auto-cal of MMC5603 complete
+        val tarMisalignDeg:       Float   = 0f,    // LC02H mounting offset vs COG (degrees)
+        val tarMisalignCalibrated: Boolean = false, // mounting offset auto-detected
+        val source:               String  = "none",
+        val debugMsg:             String  = "",
     )
 
     private var state = FusedState()
@@ -66,35 +68,62 @@ class SensorFusion {
     var onFusedHeading: ((FusedState) -> Unit)? = null
 
     // ── #1 Sea state estimation ────────────────────────────────────────────────
-    // Uses vertical accel variance over a rolling window.
-    // seaState = stddev(az_highpass) / GRAVITY_LSB — normalised 0–1.
+    // Combines vertical accel variance (heave) + gyro pitch/roll rate variance (angular motion).
+    // More sensitive than accel alone — gyro responds immediately to wave-induced rotation.
 
-    private val SEA_STATE_WINDOW  = 100          // samples at 50Hz = 2 seconds
-    private val SEA_STATE_CALM    = 200f          // LSB stddev threshold for calm
-    private val SEA_STATE_ROUGH   = 2000f         // LSB stddev threshold for rough
-    private val azWindow          = FloatArray(SEA_STATE_WINDOW)
-    private var azWindowIdx       = 0
-    private var azWindowFull      = false
-    private var azLpf             = 0f            // low-pass filtered az for DC removal
+    private val SEA_STATE_WINDOW = 100       // samples at 50Hz = 2 seconds
 
-    private fun updateSeaState(az: Short): Float {
-        val azF = az.toFloat()
-        // High-pass: remove gravity DC component
-        azLpf = azLpf * 0.99f + azF * 0.01f
-        val azHp = azF - azLpf
+    /** Accel Z stddev (LSB) for calm sea. Raise to reduce sensitivity. Default 200. */
+    var seaAzCalm:   Float = 200f
+    /** Accel Z stddev (LSB) for rough sea. Default 2000. */
+    var seaAzRough:  Float = 2000f
+    /** Gyro XY RMS stddev (LSB) for calm sea. Raise to reduce sensitivity. Default 100. */
+    var seaGxyCalm:  Float = 100f
+    /** Gyro XY RMS stddev (LSB) for rough sea. Default 800. */
+    var seaGxyRough: Float = 800f
 
-        azWindow[azWindowIdx] = azHp
-        azWindowIdx = (azWindowIdx + 1) % SEA_STATE_WINDOW
-        if (azWindowIdx == 0) azWindowFull = true
+    private val azWindow    = FloatArray(SEA_STATE_WINDOW)
+    private val gxyWindow   = FloatArray(SEA_STATE_WINDOW)  // combined gx+gy energy
+    private var seaWinIdx   = 0
+    private var seaWinFull  = false
+    private var azLpf       = 0f
+    private var gxLpf       = 0f
+    private var gyLpf       = 0f
 
-        val n = if (azWindowFull) SEA_STATE_WINDOW else azWindowIdx
-        if (n < 10) return state.seaState   // not enough samples yet
+    /**
+     * Update sea state from accel Z (heave) and gyro X/Y (pitch/roll rate).
+     * Returns 0=calm … 1=rough.
+     */
+    private fun updateSeaState(az: Short, gx: Short, gy: Short): Float {
+        // High-pass filter each axis — remove DC (gravity / steady rotation)
+        val azF = az.toFloat(); azLpf = azLpf * 0.99f + azF * 0.01f
+        val gxF = gx.toFloat(); gxLpf = gxLpf * 0.99f + gxF * 0.01f
+        val gyF = gy.toFloat(); gyLpf = gyLpf * 0.99f + gyF * 0.01f
 
-        val mean   = azWindow.take(n).sum() / n
-        val variance = azWindow.take(n).sumOf { ((it - mean) * (it - mean)).toDouble() }.toFloat() / n
-        val stddev = sqrt(variance)
+        azWindow[seaWinIdx]  = azF - azLpf
+        // Combine gx and gy as RMS energy — either axis rolling/pitching counts
+        val gxyHp = sqrt((gxF - gxLpf) * (gxF - gxLpf) + (gyF - gyLpf) * (gyF - gyLpf))
+        gxyWindow[seaWinIdx] = gxyHp
 
-        return ((stddev - SEA_STATE_CALM) / (SEA_STATE_ROUGH - SEA_STATE_CALM)).coerceIn(0f, 1f)
+        seaWinIdx = (seaWinIdx + 1) % SEA_STATE_WINDOW
+        if (seaWinIdx == 0) seaWinFull = true
+
+        val n = if (seaWinFull) SEA_STATE_WINDOW else seaWinIdx
+        if (n < 10) return state.seaState
+
+        // Stddev of each channel
+        fun stddev(arr: FloatArray): Float {
+            val mean = arr.take(n).sum() / n
+            val v = arr.take(n).sumOf { ((it - mean) * (it - mean)).toDouble() }.toFloat() / n
+            return sqrt(v)
+        }
+        val azStd  = stddev(azWindow)
+        val gxyStd = stddev(gxyWindow)
+
+        // Normalise each to 0–1 then take max — either accel or gyro can detect rough sea
+        val azSea  = ((azStd  - seaAzCalm)  / (seaAzRough  - seaAzCalm )).coerceIn(0f, 1f)
+        val gxySea = ((gxyStd - seaGxyCalm) / (seaGxyRough - seaGxyCalm)).coerceIn(0f, 1f)
+        return maxOf(azSea, gxySea)
     }
 
     // ── #3 Automatic deadband ─────────────────────────────────────────────────
@@ -204,6 +233,54 @@ class SensorFusion {
         return true
     }
 
+    // ── LC02H Install Misalignment Auto-Calibration ───────────────────────────
+    // When speed > 4kt AND calm sea: vessel tracks straight, so RMC COG is the
+    // true vessel heading. Any stable offset between PQTMTAR and COG = mounting error.
+    // Guard: only accept if |mean| < 15° (gross misinstall needs physical correction).
+
+    private val TAR_MISALIGN_SPEED_KT  = 4.0f
+    private val TAR_MISALIGN_SEA_STATE = 0.15f   // calm only
+    private val TAR_MISALIGN_WINDOW    = 30       // samples to accumulate
+    private val TAR_MISALIGN_STABLE    = 3.0f     // stddev threshold in degrees
+    private val TAR_MISALIGN_MAX       = 15.0f    // reject large offsets (gross misinstall)
+
+    private val misalignWindow = FloatArray(TAR_MISALIGN_WINDOW)
+    private var misalignIdx    = 0
+    private var misalignFull   = false
+
+    var tarMisalignEstimate:   Float   = 0f    // mounting offset (degrees), applied in processA2
+        private set
+    var tarMisalignCalibrated: Boolean = false
+        private set
+
+    private fun updateTarMisalignment(cogDeg: Float, tarDeg: Float,
+                                      speedKt: Float, seaState: Float) {
+        if (speedKt < TAR_MISALIGN_SPEED_KT || seaState > TAR_MISALIGN_SEA_STATE) return
+
+        // Wrap-safe bias: COG − PQTMTAR
+        var bias = cogDeg - tarDeg
+        while (bias >  180f) bias -= 360f
+        while (bias < -180f) bias += 360f
+
+        misalignWindow[misalignIdx] = bias
+        misalignIdx = (misalignIdx + 1) % TAR_MISALIGN_WINDOW
+        if (misalignIdx == 0) misalignFull = true
+
+        val n = if (misalignFull) TAR_MISALIGN_WINDOW else misalignIdx
+        if (n < TAR_MISALIGN_WINDOW) return   // not enough samples yet
+
+        val mean     = misalignWindow.take(n).sum() / n
+        val variance = misalignWindow.take(n).sumOf { ((it - mean) * (it - mean)).toDouble() }.toFloat() / n
+        val stddev   = sqrt(variance)
+
+        // Accept only if stable AND small — large = wrong physical orientation
+        if (stddev < TAR_MISALIGN_STABLE && abs(mean) < TAR_MISALIGN_MAX) {
+            tarMisalignEstimate   = mean
+            tarMisalignCalibrated = true
+            Log.i("SensorFusion", "LC02H misalign calibrated: ${"%.2f".format(mean)}° stddev=${"%.2f".format(stddev)}°")
+        }
+    }
+
     // ── Complementary filter ──────────────────────────────────────────────────
 
     private var filteredHeading   = 0f
@@ -247,18 +324,29 @@ class SensorFusion {
     // ── 0xA1 — IMU + Mag (50 Hz) ─────────────────────────────────────────────
 
     /**
-     * Process raw IMU + magnetometer packet.
+     * Process raw IMU + magnetometer packet (0xA1, 50Hz).
      *
-     * @param ax,ay,az  Accelerometer raw LSB (QMI8658C)
-     * @param gx,gy,gz  Gyroscope raw LSB
-     * @param mx,my,mz  Magnetometer raw LSB (MMC5603)
-     * @param nowMs     Current time in milliseconds
+     * QMI8658C accel (ax,ay,az) + gyro (gx,gy,gz):
+     *   - gz → yaw rate → complementary filter gyro integration
+     *   - gx,gy + az → sea state estimation (wave heave + angular motion)
+     *   - ax,ay,az → tilt angles (roll/pitch) for magnetometer compensation
+     *
+     * MMC5603 mag (mx,my,mz):
+     *   - Tilt-compensated using accel roll/pitch → magnetic heading
+     *   - Used as absolute heading reference in complementary filter
+     *   - Prevents gyro drift over time
+     *   - Weight is small (0.02–0.05) — gyro dominates short-term, mag corrects long-term
+     *   - Hard-iron offsets applied from dock calibration
+     *   - GPS bias applied when GPS auto-cal has run at sea
+     *
+     * @param accelRotated180  true if QMI8658C is mounted 180° from MMC5603 on your PCB
      */
     fun processA1(
         ax: Short, ay: Short, az: Short,
         gx: Short, gy: Short, gz: Short,
         mx: Short, my: Short, mz: Short,
-        nowMs: Long
+        nowMs: Long,
+        accelRotated180: Boolean = false
     ) {
         val dtS = if (lastImuTimeMs > 0L)
             ((nowMs - lastImuTimeMs) / 1000f).coerceIn(0f, 0.1f)
@@ -269,29 +357,38 @@ class SensorFusion {
         val gzCorrected = gz - gyroBiasZ
         val gyroZDegS   = gzCorrected * gyroScaleDegS
 
-        // ── #1 Sea state ──────────────────────────────────────────────────────
-        val seaState      = updateSeaState(az)
-        val autoDeadband  = computeAutoDeadband(seaState)
+        // ── #1 Sea state: accel Z heave + gyro X/Y angular rate ──────────────
+        val seaState     = updateSeaState(az, gx, gy)
+        val autoDeadband = computeAutoDeadband(seaState)
 
-        // ── Tilt-compensated magnetometer heading ─────────────────────────────
-        // Apply hard-iron calibration offsets if available
+        // ── Apply accel 180° rotation if sensors are misaligned on PCB ───────
+        // If QMI8658C ax/ay are 180° from MMC5603 frame: flip ax and ay
+        // so tilt compensation uses the same coordinate frame as the mag.
+        val axEff = if (accelRotated180) (-ax.toInt()).toShort() else ax
+        val ayEff = if (accelRotated180) (-ay.toInt()).toShort() else ay
+
+        // ── MMC5603 tilt-compensated magnetic heading ─────────────────────────
+        // Hard-iron offset from dock calibration
         val mxCal = (mx - manualCalHardIronX).toInt().toShort()
         val myCal = (my - manualCalHardIronY).toInt().toShort()
 
-        val roll  = atan2(ay.toFloat(), az.toFloat())
-        val pitch = atan2(-ax.toFloat(), ay * sin(roll) + az * cos(roll))
-        val mxH   = mxCal * cos(pitch) + mz * sin(pitch)
-        val myH   = mxCal * sin(roll) * sin(pitch) + myCal * cos(roll) - mz * sin(roll) * cos(pitch)
+        // Compute roll and pitch from (possibly rotated) accelerometer
+        val roll  = atan2(ayEff.toFloat(), az.toFloat())
+        val pitch = atan2(-axEff.toFloat(), ayEff * sin(roll) + az * cos(roll))
+
+        // Project magnetometer onto horizontal plane (tilt compensation)
+        val mxH = mxCal * cos(pitch) + mz * sin(pitch)
+        val myH = mxCal * sin(roll) * sin(pitch) + myCal * cos(roll) - mz * sin(roll) * cos(pitch)
         val rawMagHeading = ((Math.toDegrees(atan2(myH.toDouble(), mxH.toDouble()))
             .toFloat() + 360f) % 360f)
 
-        // Apply GPS auto-calibration bias if calibrated
+        // Apply GPS auto-calibration bias (learned at sea, speed>2kt, calm)
         val magHeading = if (magCalibrated)
             ((rawMagHeading + magBiasEstimate) + 360f) % 360f
         else rawMagHeading
 
         // ── Tilt quality factor ───────────────────────────────────────────────
-        val accelNorm  = sqrt((ax * ax + ay * ay + az * az).toFloat())
+        val accelNorm  = sqrt((axEff * axEff + ayEff * ayEff + az * az).toFloat())
         val tiltDeg    = if (accelNorm > 0f)
             Math.toDegrees(acos((az / accelNorm).toDouble().coerceIn(-1.0, 1.0))).toFloat()
         else 90f
@@ -362,6 +459,12 @@ class SensorFusion {
     ) {
         val speedKt = cachedRmcSpeed
 
+        // Apply LC02H mounting misalignment correction if calibrated
+        // e.g. antenna mounted 3° left → tarMisalignEstimate = +3° → correct right
+        val correctedTarHdg = if (tarMisalignCalibrated)
+            ((tarHeadingDeg + tarMisalignEstimate) + 360f) % 360f
+        else tarHeadingDeg
+
         // ── PQTMTAR weight ────────────────────────────────────────────────────
         val qualFactor = when (gnssQuality) { 4 -> 1.0f; 6 -> 0.5f; else -> 0.0f }
         // Accuracy: 0°=1.0, 20°=0.0  (tarAccDeg is float, e.g. 0.5°)
@@ -386,11 +489,11 @@ class SensorFusion {
         wTar /= totalW
         wRmc /= totalW
 
-        // Wrap-safe blend PQTMTAR + RMC
-        var diff = cachedRmcHeading - tarHeadingDeg
+        // Wrap-safe blend correctedTarHdg + RMC COG
+        var diff = cachedRmcHeading - correctedTarHdg
         while (diff >  180f) diff -= 360f
         while (diff < -180f) diff += 360f
-        val blended = ((tarHeadingDeg + wRmc * diff) + 360f) % 360f
+        val blended = ((correctedTarHdg + wRmc * diff) + 360f) % 360f
 
         val conf = (qualFactor * accFactor * satFactor * 0.8f +
                 wRmc * (speedKt / 2f).coerceIn(0f, 1f) * 0.2f).coerceIn(0f, 1f)
@@ -408,15 +511,17 @@ class SensorFusion {
         )
 
         state = state.copy(
-            headingDeg    = fused,
-            speedKnots    = speedKt,
-            hasHeading    = true,
-            hasFix        = gnssQuality >= 4,
-            satellites    = satellites,
-            headingConf   = conf,
-            magCalibrated = magCalibrated,
-            source        = "gnss+imu",
-            debugMsg      = "A2: tar=${"%.1f".format(tarHeadingDeg)}(w=${"%.2f".format(wTar)}) rmc=${"%.1f".format(cachedRmcHeading)}(w=${"%.2f".format(wRmc)}) blend=${"%.1f".format(blended)} → ${"%.1f".format(fused)} conf=${"%.2f".format(conf)} acc=$tarAccDeg sats=$satellites spd=$speedKt"
+            headingDeg            = fused,
+            speedKnots            = speedKt,
+            hasHeading            = true,
+            hasFix                = gnssQuality >= 4,
+            satellites            = satellites,
+            headingConf           = conf,
+            magCalibrated         = magCalibrated,
+            tarMisalignDeg        = tarMisalignEstimate,
+            tarMisalignCalibrated = tarMisalignCalibrated,
+            source                = "gnss+imu",
+            debugMsg              = "A2: tar=${"%.1f".format(tarHeadingDeg)}${if (tarMisalignCalibrated) "(+${"%.1f".format(tarMisalignEstimate)}°)" else ""}(w=${"%.2f".format(wTar)}) rmc=${"%.1f".format(cachedRmcHeading)}(w=${"%.2f".format(wRmc)}) → ${"%.1f".format(fused)} conf=${"%.2f".format(conf)} spd=$speedKt"
         )
         onFusedHeading?.invoke(state)
     }
@@ -426,32 +531,40 @@ class SensorFusion {
     /**
      * Process GNRMC position packet (0xA3).
      * Caches speed and COG for blending with next A2 packet.
+     * Also drives LC02H install misalignment auto-calibration at >4kt calm sea.
      *
      * @param latDeg    Decimal degrees latitude
      * @param lonDeg    Decimal degrees longitude
      * @param speedKt   Speed over ground in knots
-     * @param courseDeg Course over ground (RMC COG) in degrees
+     * @param cogDeg    Course over ground (RMC heading at speed) in degrees
      * @param hasFix    True if RMC status is 'A' (active)
      */
     fun processA3(
-        latDeg:    Double,
-        lonDeg:    Double,
-        speedKt:   Float,
-        courseDeg: Float,
-        hasFix:    Boolean
+        latDeg:  Double,
+        lonDeg:  Double,
+        speedKt: Float,
+        cogDeg:  Float,
+        hasFix:  Boolean
     ) {
-        // Cache RMC values for A2 blending
+        // Cache RMC COG + speed for blending in processA2
         cachedRmcSpeed   = speedKt
-        cachedRmcHeading = courseDeg
+        cachedRmcHeading = cogDeg
         cachedRmcValid   = hasFix && speedKt >= 0.5f
 
+        // Auto-calibrate LC02H mounting misalignment vs COG at high speed + calm sea
+        if (speedKt >= TAR_MISALIGN_SPEED_KT) {
+            updateTarMisalignment(cogDeg, state.headingDeg, speedKt, state.seaState)
+        }
+
         state = state.copy(
-            latDeg     = latDeg,
-            lonDeg     = lonDeg,
-            speedKnots = speedKt,
-            hasFix     = hasFix,
-            source     = state.source,
-            debugMsg   = "A3: lat=${"%.6f".format(latDeg)} lon=${"%.6f".format(lonDeg)} spd=${"%.2f".format(speedKt)}kt cog=${"%.1f".format(courseDeg)}"
+            latDeg                = latDeg,
+            lonDeg                = lonDeg,
+            speedKnots            = speedKt,
+            hasFix                = hasFix,
+            tarMisalignDeg        = tarMisalignEstimate,
+            tarMisalignCalibrated = tarMisalignCalibrated,
+            source                = state.source,
+            debugMsg              = "A3: lat=${"%.6f".format(latDeg)} lon=${"%.6f".format(lonDeg)} spd=${"%.2f".format(speedKt)}kt cog=${"%.1f".format(cogDeg)}${if (tarMisalignCalibrated) " misalign=${"%.1f".format(tarMisalignEstimate)}°" else ""}"
         )
         onFusedHeading?.invoke(state)
     }

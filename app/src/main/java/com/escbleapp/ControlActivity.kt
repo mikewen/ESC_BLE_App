@@ -479,6 +479,7 @@ class ControlActivity : AppCompatActivity() {
 
     private fun setupGps() {
         gpsManager = GpsManager(this)
+        gpsManager.accelRotated180 = true   // QMI8658C ax/ay flipped 180° vs MMC5603 on this PCB
 
         gpsManager.onUpdate = { data -> runOnUiThread { updateGpsUi(data) } }
 

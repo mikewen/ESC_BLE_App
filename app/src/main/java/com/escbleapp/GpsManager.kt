@@ -90,7 +90,13 @@ class GpsManager(private val context: Context) {
     var onNmeaDebug: ((String)  -> Unit)? = null
     var onLogStatus: ((String)  -> Unit)? = null
 
-    // ── Trip stats ────────────────────────────────────────────────────────────
+    // ── Hardware configuration ────────────────────────────────────────────────
+    /**
+     * Set true if QMI8658C accelerometer X/Y axes are mounted 180° from MMC5603
+     * on the PCB (i.e. they face opposite directions).
+     * Effect: ax = -ax, ay = -ay before tilt compensation.
+     */
+    var accelRotated180: Boolean = false
 
     var tripDistanceNm: Double = 0.0
         private set
@@ -282,7 +288,8 @@ class GpsManager(private val context: Context) {
                 val ax  = getI2(b, 2);  val ay = getI2(b, 4);  val az = getI2(b, 6)
                 val gx  = getI2(b, 8);  val gy = getI2(b, 10); val gz = getI2(b, 12)
                 val mx  = getI2(b, 14); val my = getI2(b, 16); val mz = getI2(b, 18)
-                fusion.processA1(ax, ay, az, gx, gy, gz, mx, my, mz, System.currentTimeMillis())
+                fusion.processA1(ax, ay, az, gx, gy, gz, mx, my, mz,
+                    System.currentTimeMillis(), accelRotated180)
             }
             0xA2.toByte() -> {
                 if (b.size < 17) return
@@ -306,15 +313,19 @@ class GpsManager(private val context: Context) {
             }
             0xA3.toByte() -> {
                 if (b.size < 17) return
-                // val timeMs = buf.getInt(1).toLong() and 0xFFFFFFFFL  // not used in fusion
                 val rawLat   = buf.getInt(5)  / 10000.0f
                 val rawLon   = buf.getInt(9)  / 10000.0f
                 val speedKt  = (buf.getShort(13).toInt() and 0xFFFF) / 100.0f
                 val course   = (buf.getShort(15).toInt() and 0xFFFF) / 100.0f
                 val lat      = convertNmeaToDecimal(rawLat)
                 val lon      = convertNmeaToDecimal(rawLon)
-                val hasFix   = rawLat != 0f || rawLon != 0f   // non-zero = valid position
-                Log.d("GpsManager", "A3: lat=${"%.6f".format(lat)} lon=${"%.6f".format(lon)} spd=$speedKt cog=$course")
+                val hasFix   = rawLat != 0f || rawLon != 0f
+                Log.d("GpsManager", "A3: lat=${"%.6f".format(lat)} lon=${"%.6f".format(lon)} spd=$speedKt cog=$course fix=$hasFix")
+                // Auto-switch to BLE GPS when A3 has a valid fix — BLE position is more accurate
+                if (hasFix && usePhoneGps) {
+                    Log.i("GpsManager", "A3 valid fix received — switching to BLE GPS automatically")
+                    usePhoneGps = false
+                }
                 fusion.processA3(lat, lon, speedKt, course, hasFix)
             }
         }

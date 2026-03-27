@@ -28,25 +28,75 @@
 
         <!-- ── ENGAGE TOGGLE ── -->
         <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:background="#0D1A2E" android:orientation="horizontal"
-            android:paddingHorizontal="16dp" android:paddingVertical="10dp"
-            android:gravity="center_vertical">
+            android:background="#0D1A2E" android:orientation="vertical">
 
-            <Button android:id="@+id/btnEngage"
-                android:layout_width="0dp" android:layout_height="52dp"
-                android:layout_weight="1" android:text="ENGAGE"
-                android:textSize="16sp" android:textStyle="bold"
-                android:backgroundTint="#0D4A3A" android:textColor="#14FFEC"
-                style="@style/Widget.MaterialComponents.Button"/>
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:paddingHorizontal="16dp" android:paddingTop="10dp"
+                android:paddingBottom="6dp" android:gravity="center_vertical">
 
-            <View android:layout_width="12dp" android:layout_height="1dp"/>
+                <Button android:id="@+id/btnEngage"
+                    android:layout_width="0dp" android:layout_height="52dp"
+                    android:layout_weight="1" android:text="ENGAGE"
+                    android:textSize="16sp" android:textStyle="bold"
+                    android:backgroundTint="#0D4A3A" android:textColor="#14FFEC"
+                    style="@style/Widget.MaterialComponents.Button"/>
 
-            <Button android:id="@+id/btnDisengage"
-                android:layout_width="0dp" android:layout_height="52dp"
-                android:layout_weight="1" android:text="DISENGAGE"
-                android:textSize="16sp" android:textStyle="bold"
-                android:backgroundTint="#4A1A0D" android:textColor="#FF8888"
-                style="@style/Widget.MaterialComponents.Button"/>
+                <View android:layout_width="12dp" android:layout_height="1dp"/>
+
+                <Button android:id="@+id/btnDisengage"
+                    android:layout_width="0dp" android:layout_height="52dp"
+                    android:layout_weight="1" android:text="DISENGAGE"
+                    android:textSize="16sp" android:textStyle="bold"
+                    android:backgroundTint="#4A1A0D" android:textColor="#FF8888"
+                    style="@style/Widget.MaterialComponents.Button"/>
+            </LinearLayout>
+
+            <!-- Speed + Mag heading strip below engage buttons -->
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="horizontal" android:gravity="center_vertical"
+                android:paddingHorizontal="16dp" android:paddingBottom="8dp">
+
+                <!-- Speed — larger -->
+                <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="1" android:orientation="vertical">
+                    <TextView android:text="SPEED" android:textColor="#33AABBCC"
+                        android:textSize="10sp" android:fontFamily="monospace"
+                        android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                    <TextView android:id="@+id/tvApSpeedBig"
+                        android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        android:text="—" android:textColor="#14FFEC"
+                        android:textSize="32sp" android:textStyle="bold"
+                        android:fontFamily="monospace" android:includeFontPadding="false"/>
+                </LinearLayout>
+
+                <!-- Mag heading -->
+                <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="1" android:orientation="vertical"
+                    android:gravity="center_horizontal">
+                    <TextView android:text="MAG HDG" android:textColor="#33AABBCC"
+                        android:textSize="10sp" android:fontFamily="monospace"
+                        android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                    <TextView android:id="@+id/tvMagHeading"
+                        android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        android:text="—°" android:textColor="#FFB300"
+                        android:textSize="28sp" android:textStyle="bold"
+                        android:fontFamily="monospace" android:includeFontPadding="false"/>
+                </LinearLayout>
+
+                <!-- Auto-DB toggle -->
+                <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:orientation="vertical" android:gravity="center_horizontal">
+                    <TextView android:text="AUTO DB" android:textColor="#33AABBCC"
+                        android:textSize="10sp" android:fontFamily="monospace"
+                        android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/switchAutoDeadband"
+                        android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        android:checked="true"
+                        app:thumbTint="#14FFEC" app:trackTint="#1A2E4A"/>
+                </LinearLayout>
+            </LinearLayout>
         </LinearLayout>
 
         <!-- ── COMPASS + LIVE DATA ── -->
