@@ -168,14 +168,28 @@ class GpsManager(private val context: Context) {
             if (currentSource == Source.BLE && !usePhoneGps) return
 
             val speedKt = loc.speed * 1.94384f
-            val cogDeg  = if (loc.hasBearing() && speedKt >= 0.3f) loc.bearing else null
-            val hasFix  = loc.accuracy < 200f
+            //val cogDeg  = if (loc.hasBearing() && speedKt >= 0.3f) loc.bearing else null
+            val cogDeg = if (
+                loc.hasBearing() &&
+                speedKt >= 2.0f &&          // ≥ ~4 knots
+                loc.accuracy < 10f          // strong fix only
+            ) loc.bearing else null
+            //val hasFix  = loc.accuracy < 200f
+            val hasFix  = loc.accuracy < 15f
             val sAccMs  = if (loc.hasSpeedAccuracy()) loc.speedAccuracyMetersPerSecond else 0.5f
 
+            /*
             fusion.processNmeaRmc(
                 speedKt  = speedKt,
                 cogDeg   = cogDeg,
                 hasFix   = hasFix,
+                latDeg   = loc.latitude,
+                lonDeg   = loc.longitude
+            ) */
+            fusion.processNmeaRmc(
+                speedKt  = speedKt,
+                cogDeg   = cogDeg,   // now often null
+                hasFix   = hasFix && loc.accuracy < 10f,
                 latDeg   = loc.latitude,
                 lonDeg   = loc.longitude
             )

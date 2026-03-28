@@ -43,6 +43,8 @@ class SensorFusion {
     /** Additional deadband per unit of sea state (0–1) */
     var seaDeadbandScale: Float = 12f
 
+    private var lastGyroZDegS: Float = 0f
+
     // ── State ─────────────────────────────────────────────────────────────────
 
     data class FusedState(
@@ -317,7 +319,9 @@ class SensorFusion {
         while (diff >  180f) diff -= 360f
         while (diff < -180f) diff += 360f
         val maxStep    = maxHeadingRateDegS * dtS
-        val correction = diff.coerceIn(-maxStep, maxStep)
+        //val correction = diff.coerceIn(-maxStep, maxStep)
+        val damping = 0.3f * gyroZDegS  // add derivative damping
+        val correction = (diff - damping).coerceIn(-maxStep, maxStep)
         filteredHeading = ((gyroHeading + sensorWeight * correction) + 360f) % 360f
         return filteredHeading
     }
@@ -361,6 +365,7 @@ class SensorFusion {
         val gzCorrected = gz - gyroBiasZ
         // Negate gz if gyro Z axis is mounted inverted (turning right should increase heading)
         val gyroZDegS   = gzCorrected * gyroScaleDegS * (if (gyroZFlipped) -1f else 1f)
+        lastGyroZDegS = gyroZDegS
 
         // ── #1 Sea state: accel Z heave + gyro X/Y angular rate ──────────────
         val seaState     = updateSeaState(az, gx, gy)
@@ -403,8 +408,12 @@ class SensorFusion {
         val gnssRecent = (nowMs - lastGnssTimeMs) < 3_000L
         val gnssFactor = if (gnssRecent) (1f - state.headingConf * 0.8f) else 1f
         // Calibrated mag gets higher base weight (0.05 vs 0.02)
-        val magBase   = if (magCalibrated) 0.15f else 0.02f
-        val magWeight = (magBase * tiltFactor * gnssFactor).coerceIn(0.02f, 0.3f)
+        val magBase   = if (magCalibrated) 0.12f else 0.02f
+
+        //val turnRate = abs(gyroZDegS)   // reduce mag correction during rotation
+        //val turnFactor = (1f - turnRate / 30f).coerceIn(0.2f, 1f)
+        //val magWeight = (magBase * tiltFactor * gnssFactor * turnFactor)
+        val magWeight = (magBase * tiltFactor * gnssFactor).coerceIn(0.02f, 0.35f)
 
         val fused = applyFilter(magHeading, gyroZDegS, magWeight, dtS)
 
@@ -506,7 +515,15 @@ class SensorFusion {
         val filterW = (0.05f + conf * 0.15f).coerceIn(0.05f, 0.20f)
 
         lastGnssTimeMs = nowMs
-        val fused = applyFilter(blended, 0f, filterW, 0.1f)
+        // Estimate turn rate from last IMU update (deg/s)
+        //val turnRate = abs(state.debugMsg.substringAfter("gz=").substringBefore(" ").toFloatOrNull() ?: 0f)
+        //val fused = applyFilter(blended, 0f, filterW, 0.1f)
+        val turnRate = abs(lastGyroZDegS)
+
+        // Reduce GNSS influence when turning
+        val turnFactor = (1f - turnRate / 20f).coerceIn(0.2f, 1f)
+        val dynamicW = filterW * turnFactor
+        val fused = applyFilter(blended, 0f, dynamicW, 0.1f)
 
         updateMagCalibration(
             gpsHeading    = blended,
