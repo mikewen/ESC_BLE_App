@@ -123,9 +123,13 @@ class GpsManager(private val context: Context) {
     init {
         fusion.onFusedHeading = { fs ->
             // Only accept BLE update if BLE is preferred or phone has no fix
-            val isBleUpdate = fs.source != "nmea"
-            val phoneBlocking = currentSource == Source.PHONE && usePhoneGps && currentData.hasFix
-            if (!phoneBlocking || !isBleUpdate) {
+            //val isBleUpdate = fs.source != "nmea"
+            val isPhoneUpdate = fs.source == "nmea"
+
+            //val phoneBlocking = currentSource == Source.PHONE && usePhoneGps && currentData.hasFix
+            //if (!phoneBlocking || !isBleUpdate) {
+            // Block ONLY phone updates when BLE is preferred
+            if (!(isPhoneUpdate && currentSource == Source.BLE && !usePhoneGps)) {
                 currentData = GpsData(
                     source            = if (fs.source == "nmea") Source.PHONE else Source.BLE,
                     speedKnots        = fs.speedKnots,

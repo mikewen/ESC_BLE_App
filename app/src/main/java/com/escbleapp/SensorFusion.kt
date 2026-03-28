@@ -28,7 +28,7 @@ class SensorFusion {
 
     // ── Tuning ────────────────────────────────────────────────────────────────
 
-    /** QMI8658C gyro scale. ±256°/s range → 256/32768 = 0.0078. Adjust to firmware config. */
+    /** QMI8658C gyro scale. ± 128°/s range → 128/32768 . Adjust to firmware config. */
     var gyroScaleDegS: Float = 1f / 256f
 
     /** Set true if turning right decreases heading (gz axis inverted on your PCB). */
