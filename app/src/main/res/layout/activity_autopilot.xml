@@ -57,45 +57,6 @@
                 android:orientation="horizontal" android:gravity="center_vertical"
                 android:paddingHorizontal="16dp" android:paddingBottom="8dp">
 
-                <!-- Speed — larger -->
-                <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content"
-                    android:layout_weight="1" android:orientation="vertical">
-                    <TextView android:text="SPEED" android:textColor="#33AABBCC"
-                        android:textSize="10sp" android:fontFamily="monospace"
-                        android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-                    <TextView android:id="@+id/tvApSpeedBig"
-                        android:layout_width="wrap_content" android:layout_height="wrap_content"
-                        android:text="—" android:textColor="#14FFEC"
-                        android:textSize="32sp" android:textStyle="bold"
-                        android:fontFamily="monospace" android:includeFontPadding="false"/>
-                </LinearLayout>
-
-                <!-- Mag heading -->
-                <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content"
-                    android:layout_weight="1" android:orientation="vertical"
-                    android:gravity="center_horizontal">
-                    <TextView android:text="MAG HDG" android:textColor="#33AABBCC"
-                        android:textSize="10sp" android:fontFamily="monospace"
-                        android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-                    <TextView android:id="@+id/tvMagHeading"
-                        android:layout_width="wrap_content" android:layout_height="wrap_content"
-                        android:text="—°" android:textColor="#FFB300"
-                        android:textSize="28sp" android:textStyle="bold"
-                        android:fontFamily="monospace" android:includeFontPadding="false"/>
-                </LinearLayout>
-
-                <!-- Auto-DB toggle -->
-                <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content"
-                    android:orientation="vertical" android:gravity="center_horizontal">
-                    <TextView android:text="AUTO DB" android:textColor="#33AABBCC"
-                        android:textSize="10sp" android:fontFamily="monospace"
-                        android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-                    <com.google.android.material.switchmaterial.SwitchMaterial
-                        android:id="@+id/switchAutoDeadband"
-                        android:layout_width="wrap_content" android:layout_height="wrap_content"
-                        android:checked="true"
-                        app:thumbTint="#14FFEC" app:trackTint="#1A2E4A"/>
-                </LinearLayout>
             </LinearLayout>
         </LinearLayout>
 
@@ -105,54 +66,87 @@
 
             <!-- Compass -->
             <com.escbleapp.CompassView android:id="@+id/apCompassView"
-                android:layout_width="120dp" android:layout_height="120dp"
-                android:layout_marginEnd="16dp" android:layout_gravity="center_vertical"/>
+                android:layout_width="110dp" android:layout_height="110dp"
+                android:layout_marginEnd="12dp" android:layout_gravity="center_vertical"/>
 
             <!-- Data column -->
             <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content"
                 android:layout_weight="1" android:orientation="vertical"
                 android:layout_gravity="center_vertical">
 
-                <!-- Target heading -->
-                <TextView android:text="TARGET" android:textColor="#44AABBCC"
-                    android:textSize="11sp" android:fontFamily="monospace"
-                    android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-                <TextView android:id="@+id/tvTargetHeading"
+                <!-- Row 1: TARGET heading (left) + SPEED big (right) -->
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="bottom">
+
+                    <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:orientation="vertical">
+                        <TextView android:text="TARGET" android:textColor="#44AABBCC"
+                            android:textSize="11sp" android:fontFamily="monospace"
+                            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                        <TextView android:id="@+id/tvTargetHeading"
+                            android:layout_width="wrap_content" android:layout_height="wrap_content"
+                            android:text="—°" android:textColor="#88CCFF"
+                            android:textSize="40sp" android:textStyle="bold"
+                            android:fontFamily="monospace" android:includeFontPadding="false"/>
+                    </LinearLayout>
+
+                    <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:orientation="vertical"
+                        android:gravity="end">
+                        <TextView android:text="SPEED" android:textColor="#44AABBCC"
+                            android:textSize="11sp" android:fontFamily="monospace"
+                            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                        <TextView android:id="@+id/tvApSpeedBig"
+                            android:layout_width="wrap_content" android:layout_height="wrap_content"
+                            android:text="—" android:textColor="#14FFEC"
+                            android:textSize="40sp" android:textStyle="bold"
+                            android:fontFamily="monospace" android:includeFontPadding="false"/>
+                    </LinearLayout>
+                </LinearLayout>
+
+                <!-- Row 2: FUSED heading (left) + MAG heading (right) -->
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:layout_marginTop="4dp">
+
+                    <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:orientation="vertical">
+                        <TextView android:text="ACTUAL" android:textColor="#44AABBCC"
+                            android:textSize="10sp" android:fontFamily="monospace"
+                            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                        <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content"
+                            android:orientation="horizontal" android:gravity="center_vertical">
+                            <TextView android:id="@+id/tvActualHeading"
+                                android:layout_width="wrap_content" android:layout_height="wrap_content"
+                                android:text="—°" android:textColor="#14FFEC"
+                                android:textSize="36dp" android:fontFamily="monospace"/>
+                            <TextView android:id="@+id/tvHeadingError"
+                                android:layout_width="wrap_content" android:layout_height="wrap_content"
+                                android:text="" android:textColor="#FFB300"
+                                android:textSize="14sp" android:fontFamily="monospace"
+                                android:layout_marginStart="6dp"/>
+                        </LinearLayout>
+                    </LinearLayout>
+
+                    <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:orientation="vertical"
+                        android:gravity="end">
+                        <TextView android:text="MAG HDG" android:textColor="#44AABBCC"
+                            android:textSize="10sp" android:fontFamily="monospace"
+                            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                        <TextView android:id="@+id/tvMagHeading"
+                            android:layout_width="wrap_content" android:layout_height="wrap_content"
+                            android:text="—°" android:textColor="#FFB300"
+                            android:textSize="36dp" android:textStyle="bold"
+                            android:fontFamily="monospace" android:includeFontPadding="false"/>
+                    </LinearLayout>
+                </LinearLayout>
+
+                <!-- Row 3: status line (speed/conf/sea) -->
+                <TextView android:id="@+id/tvApSpeed"
                     android:layout_width="wrap_content" android:layout_height="wrap_content"
-                    android:text="—°" android:textColor="#88CCFF"
-                    android:textSize="40sp" android:textStyle="bold" android:fontFamily="monospace"
-                    android:includeFontPadding="false"/>
-
-                <!-- Actual heading -->
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:gravity="center_vertical"
-                    android:layout_marginTop="4dp">
-                    <TextView android:text="ACTUAL " android:textColor="#44AABBCC"
-                        android:textSize="11sp" android:fontFamily="monospace"
-                        android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-                    <TextView android:id="@+id/tvActualHeading"
-                        android:layout_width="wrap_content" android:layout_height="wrap_content"
-                        android:text="—°" android:textColor="#88AABBCC"
-                        android:textSize="18sp" android:fontFamily="monospace"/>
-                    <TextView android:id="@+id/tvHeadingError"
-                        android:layout_width="wrap_content" android:layout_height="wrap_content"
-                        android:text="" android:textColor="#FFB300"
-                        android:textSize="14sp" android:fontFamily="monospace"
-                        android:layout_marginStart="8dp"/>
-                </LinearLayout>
-
-                <!-- Speed -->
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:gravity="center_vertical"
-                    android:layout_marginTop="2dp">
-                    <TextView android:text="SPEED " android:textColor="#44AABBCC"
-                        android:textSize="11sp" android:fontFamily="monospace"
-                        android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-                    <TextView android:id="@+id/tvApSpeed"
-                        android:layout_width="wrap_content" android:layout_height="wrap_content"
-                        android:text="—" android:textColor="#14FFEC"
-                        android:textSize="18sp" android:fontFamily="monospace"/>
-                </LinearLayout>
+                    android:text="—" android:textColor="#55AABBCC"
+                    android:textSize="11sp" android:fontFamily="monospace"
+                    android:layout_marginTop="2dp"/>
             </LinearLayout>
         </LinearLayout>
 
@@ -406,6 +400,15 @@
                     <TextView android:text="  ±noise band" android:textColor="#99AABBCC"
                         android:textSize="12sp" android:fontFamily="monospace"
                         android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/switchAutoDeadband"
+                        android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        android:checked="true" android:layout_marginStart="8dp"
+                        app:thumbTint="#14FFEC" app:trackTint="#1A2E4A"/>
+                    <TextView android:text="auto" android:textColor="#55AABBCC"
+                        android:textSize="10sp" android:fontFamily="monospace"
+                        android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        android:layout_marginStart="2dp"/>
                 </LinearLayout>
 
             </LinearLayout>

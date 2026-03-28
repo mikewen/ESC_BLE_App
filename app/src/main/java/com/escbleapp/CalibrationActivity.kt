@@ -74,6 +74,8 @@ class CalibrationActivity : AppCompatActivity() {
     private var gyroCalActive = false
     private val GYRO_CAL_SECS = 5
     private var gyroCountdown = GYRO_CAL_SECS
+    private var accumulatedGyroZ = 0f
+    private var lastA1TimeMs = 0L
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -211,6 +213,18 @@ class CalibrationActivity : AppCompatActivity() {
         val gx = getI2(bytes, 8); val gy = getI2(bytes, 10); val gz = getI2(bytes, 12)
         val mx = getI2(bytes, 14); val my = getI2(bytes, 16); val mz = getI2(bytes, 18)
 
+        val now = System.currentTimeMillis()
+        val dt = if (lastA1TimeMs > 0) (now - lastA1TimeMs) / 1000f else 0.02f
+        lastA1TimeMs = now
+
+        // Integrate gyro Z for display (testing scale/direction)
+        val gzCorrected = gz - fusion.gyroBiasZ
+        val gzDegS = gzCorrected * fusion.gyroScaleDegS * (if (fusion.gyroZFlipped) -1f else 1f)
+        accumulatedGyroZ += gzDegS * dt
+        runOnUiThread {
+            binding.tvGyroRotateDeg.text = "Rotate: ${"%.1f".format(accumulatedGyroZ)}°"
+        }
+
         if (magCalActive) {
             fusion.feedManualMagSample(mx, my)
             val heading = fusion.getState().headingDeg
@@ -219,7 +233,7 @@ class CalibrationActivity : AppCompatActivity() {
         if (gyroCalActive) {
             fusion.feedGyroBiasSample(gx, gy, gz)
         }
-        fusion.processA1(ax, ay, az, gx, gy, gz, mx, my, mz, System.currentTimeMillis())
+        fusion.processA1(ax, ay, az, gx, gy, gz, mx, my, mz, now)
     }
 
     // ── MMC5603 calibration ───────────────────────────────────────────────────
@@ -366,6 +380,8 @@ class CalibrationActivity : AppCompatActivity() {
                 .putBoolean("gyro_cal_done", false).apply()
             binding.tvGyroCalSaved.text  = "Cleared"
             binding.tvGyroCalStatus.text = "Connect sensor then tap START"
+            accumulatedGyroZ = 0f
+            binding.tvGyroRotateDeg.text = "Rotate: 0.0°"
         }
 
         binding.btnMagCalFinish.isEnabled = false

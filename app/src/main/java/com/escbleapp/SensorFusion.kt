@@ -29,16 +29,19 @@ class SensorFusion {
     // ── Tuning ────────────────────────────────────────────────────────────────
 
     /** QMI8658C gyro scale. ±256°/s range → 256/32768 = 0.0078. Adjust to firmware config. */
-    var gyroScaleDegS: Float = 1f / 128f
+    var gyroScaleDegS: Float = 1f / 256f
+
+    /** Set true if turning right decreases heading (gz axis inverted on your PCB). */
+    var gyroZFlipped: Boolean = true   // flipped by default for this hardware setup
 
     /** Maximum believable yaw rate in °/s — rejects vibration spikes */
     var maxHeadingRateDegS: Float = 60f
 
     /** Base deadband in degrees (calm sea) */
-    var baseDeadbandDeg: Float = 2f
+    var baseDeadbandDeg: Float = 3f
 
     /** Additional deadband per unit of sea state (0–1) */
-    var seaDeadbandScale: Float = 8f
+    var seaDeadbandScale: Float = 12f
 
     // ── State ─────────────────────────────────────────────────────────────────
 
@@ -55,6 +58,7 @@ class SensorFusion {
         val seaState:             Float   = 0f,    // 0 = calm … 1 = rough
         val autoDeadbandDeg:      Float   = 2f,    // deadband adjusted for sea state
         val magCalibrated:        Boolean = false, // GPS auto-cal of MMC5603 complete
+        val rawMagHeadingDeg:     Float   = 0f,    // Raw tilt-compensated magnetometer heading
         val tarMisalignDeg:       Float   = 0f,    // LC02H mounting offset vs COG (degrees)
         val tarMisalignCalibrated: Boolean = false, // mounting offset auto-detected
         val source:               String  = "none",
@@ -355,7 +359,8 @@ class SensorFusion {
 
         // Apply gyro bias correction (from dock calibration)
         val gzCorrected = gz - gyroBiasZ
-        val gyroZDegS   = gzCorrected * gyroScaleDegS
+        // Negate gz if gyro Z axis is mounted inverted (turning right should increase heading)
+        val gyroZDegS   = gzCorrected * gyroScaleDegS * (if (gyroZFlipped) -1f else 1f)
 
         // ── #1 Sea state: accel Z heave + gyro X/Y angular rate ──────────────
         val seaState     = updateSeaState(az, gx, gy)
@@ -398,8 +403,8 @@ class SensorFusion {
         val gnssRecent = (nowMs - lastGnssTimeMs) < 3_000L
         val gnssFactor = if (gnssRecent) (1f - state.headingConf * 0.8f) else 1f
         // Calibrated mag gets higher base weight (0.05 vs 0.02)
-        val magBase   = if (magCalibrated) 0.05f else 0.02f
-        val magWeight = (magBase * tiltFactor * gnssFactor).coerceIn(0.002f, 0.08f)
+        val magBase   = if (magCalibrated) 0.15f else 0.02f
+        val magWeight = (magBase * tiltFactor * gnssFactor).coerceIn(0.02f, 0.3f)
 
         val fused = applyFilter(magHeading, gyroZDegS, magWeight, dtS)
 
@@ -409,6 +414,7 @@ class SensorFusion {
             seaState        = seaState,
             autoDeadbandDeg = autoDeadband,
             magCalibrated   = magCalibrated,
+            rawMagHeadingDeg = rawMagHeading,
             source          = "imu+mag",
             debugMsg        = "A1: gz=${"%.2f".format(gyroZDegS)} mag=${"%.1f".format(magHeading)} tilt=${"%.1f".format(tiltDeg)} sea=${"%.2f".format(seaState)} db=${"%.1f".format(autoDeadband)}° w=${"%.4f".format(magWeight)} → ${"%.1f".format(fused)}"
         )
@@ -629,7 +635,7 @@ class SensorFusion {
      */
     fun processNmeaRmc(
         speedKt:   Float,
-        cogDeg:    Float?,   // null if no COG available
+        cogDeg:    Float?,
         hasFix:    Boolean,
         latDeg:    Double?,
         lonDeg:    Double?
@@ -642,7 +648,9 @@ class SensorFusion {
         state = state.copy(
             headingDeg  = heading,
             speedKnots  = speedKt,
-            hasHeading  = hasHdg,
+            // Only update hasHeading if phone actually has a heading.
+            // Don't overwrite hasHeading=true that was set by IMU/mag (processA1).
+            hasHeading  = if (hasHdg) true else state.hasHeading,
             hasFix      = hasFix,
             latDeg      = latDeg ?: state.latDeg,
             lonDeg      = lonDeg ?: state.lonDeg,

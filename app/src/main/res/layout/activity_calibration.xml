@@ -147,7 +147,14 @@
                     android:layout_width="match_parent" android:layout_height="wrap_content"
                     android:text="Not calibrated"
                     android:textColor="#55AABBCC" android:textSize="11sp"
-                    android:fontFamily="monospace" android:layout_marginBottom="12dp"/>
+                    android:fontFamily="monospace" android:layout_marginBottom="4dp"/>
+
+                <TextView android:id="@+id/tvGyroRotateDeg"
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:text="Rotate: 0.0°"
+                    android:textColor="#FFB300" android:textSize="36sp"
+                    android:textStyle="bold" android:fontFamily="monospace"
+                    android:layout_marginBottom="12dp"/>
 
                 <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
                     android:orientation="horizontal">

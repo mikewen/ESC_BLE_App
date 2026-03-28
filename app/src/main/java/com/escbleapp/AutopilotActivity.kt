@@ -232,14 +232,29 @@ class AutopilotActivity : AppCompatActivity() {
 
         // Speed — update both the small label and the new big display
         val speedStr = "%.1f kt".format(data.speedKnots)
-        binding.tvApSpeed.text    = speedStr
-        binding.tvApSpeedBig.text = speedStr
+        binding.tvApSpeed.text    = speedStr   // small status line (conf/sea label added below)
+        //binding.tvApSpeedBig.text = speedStr   // large display right of TARGET
+        val spannable = android.text.SpannableString(speedStr)
+        // make "kn" smaller
+        val unitStart = speedStr.indexOf("kt")
+        if (unitStart >= 0) {
+            spannable.setSpan(
+                android.text.style.RelativeSizeSpan(0.2f), // 20% size
+                unitStart,
+                speedStr.length,
+                android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+            )
+        }
+        binding.tvApSpeedBig.text  = spannable
 
-        // Mag heading from SensorFusion (from MMC5603 tilt-compensated)
-        // Derived from processA1 — shows raw magnetic heading before GNSS correction
-        val magHdg = fusionState.headingDeg   // closest available; raw mag shown in logcat
-        //binding.tvMagHeading.text = if (fusionState.hasHeading)"%.0f°".format(magHdg) else "—°"
-        binding.tvMagHeading.text = "%.0f°".format(magHdg)
+        // tvActualHeading = fused heading (GNSS+IMU+Mag complementary filter output)
+        // same as data.headingDeg — used by autopilot controller
+        binding.tvActualHeading.text = if (data.hasHeading) "%.0f".format(actualHeading) + "°" else "—°"
+
+        // tvMagHeading = raw tilt-compensated MMC5603 magnetometer heading, BEFORE
+        // gyro integration and GNSS correction. Shows true compass heading.
+        // Useful to compare with ACTUAL to see how much the filter has drifted.
+        binding.tvMagHeading.text = "%.0f°".format(fusionState.rawMagHeadingDeg)
 
         binding.apCompassView.headingDeg = actualHeading
         binding.apCompassView.hasFix     = data.hasFix
@@ -250,7 +265,6 @@ class AutopilotActivity : AppCompatActivity() {
         val misalLabel   = if (fusionState.tarMisalignCalibrated)
             " ⊾${"%.1f".format(fusionState.tarMisalignDeg)}°" else ""
         val seaLabel  = "sea:${"%.0f".format(seaState * 100)}%"
-        binding.tvActualHeading.text = if (data.hasHeading) "%.0f".format(actualHeading) + "°" else "—°"
         binding.tvApSpeed.text = "%.1f kt  c:%d%%%s%s%s  %s".format(
             data.speedKnots, confPct, fixLabel, calLabel, misalLabel, seaLabel)
 
