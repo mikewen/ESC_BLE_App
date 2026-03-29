@@ -40,6 +40,8 @@ import kotlin.math.*
  *   SET CURRENT HEADING AS TARGET
  */
 class AutopilotActivity : AppCompatActivity() {
+    enum class BoatType { TRIMARAN, MONOHULL }
+    private var boatType = BoatType.TRIMARAN
 
     private lateinit var binding: ActivityAutopilotBinding
     private lateinit var bleManager: AC6328BleManager
@@ -121,6 +123,17 @@ class AutopilotActivity : AppCompatActivity() {
         }
     }
 
+    private fun loadBoatTuning() {
+        when (boatType) {
+            BoatType.TRIMARAN -> {
+                Kp = 0.5f; Ki = 0.02f; baseDeadbandDeg = 2f
+            }
+            BoatType.MONOHULL -> {
+                Kp = 1.2f; Ki = 0.08f; baseDeadbandDeg = 4f
+            }
+        }
+    }
+
     // ── Lifecycle ─────────────────────────────────────────────────────────────
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -137,6 +150,7 @@ class AutopilotActivity : AppCompatActivity() {
         escMode         = intent.getBooleanExtra(EXTRA_ESC_MODE, true)
         baseSpeedPct    = intent.getIntExtra(EXTRA_INIT_SPEED_PCT, 0)
 
+        loadBoatTuning()
         // Load saved Kp/Ki
         prefs       = getSharedPreferences("autopilot_prefs", Context.MODE_PRIVATE)
         Kp          = prefs.getFloat("kp", KP_DEFAULT)
@@ -333,22 +347,52 @@ class AutopilotActivity : AppCompatActivity() {
 
         // Deadband — zero correction inside the band, reset integral to prevent windup
         if (Math.abs(error) < deadbandDeg) {
-            headingIntegral = 0f
+            //headingIntegral = 0f
+            // Decay instead of reset → keeps bias compensation (wind/current)
+            headingIntegral *= 0.8f
             sendMotors(baseSpeedPct, baseSpeedPct)
             updateMotorDisplay(baseSpeedPct, baseSpeedPct, error)
             return
         }
 
-        // Integrate with anti-windup
-        headingIntegral = (headingIntegral + error * dt)
+//        // Integrate with anti-windup
+//        headingIntegral = (headingIntegral + error * dt)
+//            .coerceIn(-MAX_INTEGRAL, MAX_INTEGRAL)
+//
+//        // PI output scaled by heading confidence (from sAcc vs speed ratio)
+//        val rawDiff = (error * Kp + headingIntegral * Ki) * headingConfidence
+//        val diff    = rawDiff.toInt().coerceIn(-MAX_DIFF_PCT, MAX_DIFF_PCT)
+//
+//        val portPct = (baseSpeedPct + diff).coerceIn(0, 100)
+//        val stbdPct = (baseSpeedPct - diff).coerceIn(0, 100)
+// --- Improved PI control with actuator-aware limiting and anti-windup ---
+
+// Candidate integral
+        val newIntegral = (headingIntegral + error * dt)
             .coerceIn(-MAX_INTEGRAL, MAX_INTEGRAL)
 
-        // PI output scaled by heading confidence (from sAcc vs speed ratio)
-        val rawDiff = (error * Kp + headingIntegral * Ki) * headingConfidence
-        val diff    = rawDiff.toInt().coerceIn(-MAX_DIFF_PCT, MAX_DIFF_PCT)
+// PI output (float — DO NOT quantize yet)
+        val rawDiff = (error * Kp + newIntegral * Ki) * headingConfidence
 
-        val portPct = (baseSpeedPct + diff).coerceIn(0, 100)
-        val stbdPct = (baseSpeedPct - diff).coerceIn(0, 100)
+// speed-based scaling (helps across different boats)
+        val speedFactor = (50f / max(baseSpeedPct, 10)).coerceIn(0.5f, 2.0f)
+        val scaledDiff = rawDiff * speedFactor
+
+// Clamp to controller limits
+        val diff = scaledDiff.coerceIn(-MAX_DIFF_PCT.toFloat(), MAX_DIFF_PCT.toFloat())
+
+// Anti-windup: only accept integral if not saturated
+        if (abs(diff) < MAX_DIFF_PCT) {
+            headingIntegral = newIntegral
+        }
+
+// Actuator-aware symmetric limiting (CRITICAL FIX)
+        val maxDiffAllowed = min(baseSpeedPct, 100 - baseSpeedPct)
+        val finalDiff = diff.coerceIn(-maxDiffAllowed.toFloat(), maxDiffAllowed.toFloat())
+
+// Convert to motor commands (NOW quantize)
+        val portPct = (baseSpeedPct + finalDiff).roundToInt()
+        val stbdPct = (baseSpeedPct - finalDiff).roundToInt()
 
         sendMotors(portPct, stbdPct)
         updateMotorDisplay(portPct, stbdPct, error)
