@@ -413,7 +413,17 @@ class SensorFusion {
         //val turnRate = abs(gyroZDegS)   // reduce mag correction during rotation
         //val turnFactor = (1f - turnRate / 30f).coerceIn(0.2f, 1f)
         //val magWeight = (magBase * tiltFactor * gnssFactor * turnFactor)
-        val magWeight = (magBase * tiltFactor * gnssFactor).coerceIn(0.02f, 0.35f)
+        // ── NEW: Speed Factor to reduce Mag weight when GPS COG is reliable ──
+        val speedKt = state.speedKnots
+        val speedFactor = when {
+            speedKt < 3.0f -> 1.0f                  // Below 3kt: Normal Mag weight
+            speedKt > 5.0f -> 0.1f                  // Above 5kt: Minimal Mag weight (Trust Gyro+GPS)
+            else -> 1.0f - ((speedKt - 3.0f) / 2.0f) * 0.9f // Ramp down between 3kt and 5kt
+        }
+        //val magWeight = (magBase * tiltFactor * gnssFactor).coerceIn(0.02f, 0.35f)
+        // Apply speed factor to final weight
+        val magWeight = (magBase * tiltFactor * gnssFactor * speedFactor)
+            .coerceIn(0.01f, 0.35f) // Lower min bound to allow very low mag influence
 
         val fused = applyFilter(magHeading, gyroZDegS, magWeight, dtS)
 
