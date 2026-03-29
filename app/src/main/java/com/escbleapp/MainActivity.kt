@@ -3,6 +3,7 @@ package com.escbleapp
 import android.Manifest
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
 import android.bluetooth.le.BluetoothLeScanner
 import android.bluetooth.le.ScanCallback
@@ -51,6 +52,12 @@ class MainActivity : AppCompatActivity() {
     private val devices = mutableListOf<BleDeviceItem>()
     private val seenAddresses = mutableSetOf<String>()
 
+    // Remote device — found via separate scan, passed to ControlActivity/AutopilotActivity
+    private var remoteDevice: BluetoothDevice? = null
+    private var remoteScanCallback: android.bluetooth.le.ScanCallback? = null
+    private var isRemoteScanning = false
+    private val REMOTE_SCAN_PERIOD_MS = 10_000L
+
     // Permission launcher
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -74,6 +81,7 @@ class MainActivity : AppCompatActivity() {
             val intent = Intent(this, ControlActivity::class.java).apply {
                 putExtra(ControlActivity.EXTRA_DEVICE, item.device)
                 putExtra(ControlActivity.EXTRA_DEVICE_NAME, item.name)
+                remoteDevice?.let { putExtra(ControlActivity.EXTRA_REMOTE_DEVICE, it) }
             }
             startActivity(intent)
         }
@@ -89,7 +97,75 @@ class MainActivity : AppCompatActivity() {
             startActivity(android.content.Intent(this, CalibrationActivity::class.java))
         }
 
+        binding.btnScanRemote.setOnClickListener { startRemoteScan() }
+        updateRemoteButton()
+
         binding.chipFilterEsc.setOnCheckedChangeListener { _, _ -> /* filter applied in callback */ }
+    }
+
+    // ── Remote scan ───────────────────────────────────────────────────────────
+
+    @SuppressLint("MissingPermission")
+    private fun startRemoteScan() {
+        if (remoteDevice != null) {
+            // Already found — clear it
+            remoteDevice = null
+            updateRemoteButton()
+            return
+        }
+        if (isRemoteScanning) return
+        val adapter = bluetoothAdapter ?: return
+        isRemoteScanning = true
+        updateRemoteButton()
+
+        val cb = object : android.bluetooth.le.ScanCallback() {
+            override fun onScanResult(callbackType: Int, result: android.bluetooth.le.ScanResult) {
+                val name = result.device.name ?: return
+                val match = RemoteBleManager.REMOTE_NAME_FILTERS.any { name.contains(it, true) }
+                if (match) {
+                    stopRemoteScan()
+                    remoteDevice = result.device
+                    runOnUiThread { updateRemoteButton() }
+                    Toast.makeText(this@MainActivity, "Remote found: $name", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+        remoteScanCallback = cb
+        adapter.bluetoothLeScanner?.startScan(null,
+            android.bluetooth.le.ScanSettings.Builder()
+                .setScanMode(android.bluetooth.le.ScanSettings.SCAN_MODE_LOW_LATENCY).build(), cb)
+        handler.postDelayed({
+            stopRemoteScan()
+            if (remoteDevice == null)
+                runOnUiThread { Toast.makeText(this, "No remote found", Toast.LENGTH_SHORT).show() }
+        }, REMOTE_SCAN_PERIOD_MS)
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun stopRemoteScan() {
+        if (!isRemoteScanning) return
+        isRemoteScanning = false
+        remoteScanCallback?.let { bluetoothAdapter?.bluetoothLeScanner?.stopScan(it) }
+        remoteScanCallback = null
+        runOnUiThread { updateRemoteButton() }
+    }
+
+    @SuppressLint("SetTextI18n")
+    private fun updateRemoteButton() {
+        when {
+            isRemoteScanning -> {
+                binding.btnScanRemote.text = "Scanning…"
+                binding.btnScanRemote.setTextColor(android.graphics.Color.parseColor("#FFB300"))
+            }
+            remoteDevice != null -> {
+                binding.btnScanRemote.text = "🕹 ${remoteDevice!!.name ?: "Remote"} ✓"
+                binding.btnScanRemote.setTextColor(android.graphics.Color.parseColor("#14FFEC"))
+            }
+            else -> {
+                binding.btnScanRemote.text = "🕹 SCAN REMOTE"
+                binding.btnScanRemote.setTextColor(android.graphics.Color.parseColor("#88AABBCC"))
+            }
+        }
     }
 
     private fun checkPermissionsAndScan() {
@@ -175,7 +251,7 @@ class MainActivity : AppCompatActivity() {
             seenAddresses.add(address)
 
             val name = device.name ?: result.scanRecord?.deviceName ?: "Unknown"
-            // Show all devices if filter chip unchecked, else only ESC_PWM/BLDC_PWM/GPS_PWM
+            // Show all devices if filter chip unchecked, else only ESC_PWM/BLDC_PWM/GPS_PWM/IMU_PWM
             if (binding.chipFilterEsc.isChecked &&
                 !name.contains("ESC_PWM", true) &&
                 !name.contains("BLDC_PWM", true) &&

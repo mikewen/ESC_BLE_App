@@ -44,6 +44,7 @@ class AutopilotActivity : AppCompatActivity() {
     private lateinit var binding: ActivityAutopilotBinding
     private lateinit var bleManager: AC6328BleManager
     private lateinit var gpsManager: GpsManager
+    private var remoteBle: RemoteBleManager? = null
     private val handler = Handler(Looper.getMainLooper())
 
     // ── Mode ──────────────────────────────────────────────────────────────────
@@ -87,6 +88,7 @@ class AutopilotActivity : AppCompatActivity() {
         const val EXTRA_DEVICE_NAME      = "extra_device_name"
         const val EXTRA_ESC_MODE         = "extra_esc_mode"
         const val EXTRA_INIT_SPEED_PCT   = "extra_init_speed_pct"
+        const val EXTRA_REMOTE_DEVICE    = "extra_remote_device"
     }
 
     // Map picker result launcher
@@ -154,6 +156,12 @@ class AutopilotActivity : AppCompatActivity() {
 
         updateSpeedDisplay()
         updateCourseDisplay()
+
+        // Connect remote if passed from ControlActivity / MainActivity
+        val remoteDevice: BluetoothDevice? = if (android.os.Build.VERSION.SDK_INT >= 33)
+            intent.getParcelableExtra(EXTRA_REMOTE_DEVICE, BluetoothDevice::class.java)
+        else @Suppress("DEPRECATION") intent.getParcelableExtra(EXTRA_REMOTE_DEVICE)
+        remoteDevice?.let { connectRemote(it) }
     }
 
     override fun onDestroy() {
@@ -163,6 +171,8 @@ class AutopilotActivity : AppCompatActivity() {
         if (isConnected) { bleManager.stopMotors(); bleManager.disconnect().enqueue() }
         gpsManager.stopPhoneGps()
         bleManager.close()
+        remoteBle?.disconnect()?.enqueue()
+        remoteBle?.close()
     }
 
     // ── BLE ───────────────────────────────────────────────────────────────────
@@ -617,6 +627,68 @@ class AutopilotActivity : AppCompatActivity() {
         binding.btnApBack.setOnClickListener {
             disengage()
             finish()
+        }
+    }
+
+    // ── BLE Remote ────────────────────────────────────────────────────────────
+
+    @SuppressLint("SetTextI18n")
+    private fun connectRemote(device: BluetoothDevice) {
+        remoteBle = RemoteBleManager(this)
+        remoteBle!!.onConnected    = { runOnUiThread {
+            binding.tvRemoteStatus.text = "🕹 ${device.name ?: "Remote"}"
+        }}
+        remoteBle!!.onDisconnected = { runOnUiThread {
+            binding.tvRemoteStatus.text = ""
+        }}
+        remoteBle!!.onRemoteCommand = { cmd -> runOnUiThread { handleRemoteCommand(cmd) } }
+        remoteBle!!.connectToDevice(device)
+    }
+
+    @SuppressLint("SetTextI18n")
+    private fun handleRemoteCommand(cmd: RemoteBleManager.RemoteCommand) {
+        when {
+            cmd.isEngage     -> { engage();    showToast("Remote: ENGAGE") }
+            cmd.isDisengage  -> { disengage(); showToast("Remote: DISENGAGE") }
+            cmd.isHoldCourse -> {
+                if (hasHeading) {
+                    targetHeading = actualHeading
+                    updateCourseDisplay()
+                    showToast("Remote: HOLD ${targetHeading.toInt()}°")
+                }
+            }
+            cmd.isStop -> {
+                disengage()
+                if (isConnected) bleManager.stopMotors()
+                showToast("Remote: STOP")
+            }
+            cmd.isSpeedUp -> {
+                baseSpeedPct = (baseSpeedPct + RemoteBleManager.SPEED_STEP).coerceAtMost(100)
+                updateSpeedDisplay()
+            }
+            cmd.isSpeedDown -> {
+                baseSpeedPct = (baseSpeedPct - RemoteBleManager.SPEED_STEP).coerceAtLeast(0)
+                updateSpeedDisplay()
+                if (baseSpeedPct == 0 && isConnected) bleManager.stopMotors()
+            }
+            cmd.isSpeedUp1   -> {
+                baseSpeedPct = (baseSpeedPct + RemoteBleManager.SPEED_STEP_1).coerceAtMost(100)
+                updateSpeedDisplay()
+            }
+            cmd.isSpeedDown1 -> {
+                baseSpeedPct = (baseSpeedPct - RemoteBleManager.SPEED_STEP_1).coerceAtLeast(0)
+                updateSpeedDisplay()
+                if (baseSpeedPct == 0 && isConnected) bleManager.stopMotors()
+            }
+            cmd.isSetBothSpeed -> {
+                baseSpeedPct = cmd.bothSpeedPct
+                updateSpeedDisplay()
+            }
+            cmd.isCourse -> {
+                targetHeading = ((targetHeading + cmd.courseDelta) + 360f) % 360f
+                updateCourseDisplay()
+            }
+            // Individual motor commands — not applicable in autopilot (autopilot owns differential)
         }
     }
 }

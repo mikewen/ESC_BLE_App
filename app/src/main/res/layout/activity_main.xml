@@ -105,19 +105,31 @@
         android:layout_width="0dp"
         android:layout_height="0dp"
         android:clipToPadding="false"
-        android:paddingBottom="60dp"
+        android:paddingBottom="130dp"
         app:layout_constraintTop_toBottomOf="@id/header"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent"/>
 
-    <!-- Calibration button — fixed at bottom, always accessible after scan -->
-    <Button android:id="@+id/btnCalibrate"
-        android:layout_width="0dp" android:layout_height="44dp"
-        android:text="🧭 SENSOR CALIBRATION"
-        android:textSize="12sp" android:textStyle="bold"
-        android:backgroundTint="#0D1A2E" android:textColor="#77AABBCC"
+    <!-- Remote scan button — above calibration -->
+    <Button android:id="@+id/btnScanRemote"
+        android:layout_width="0dp" android:layout_height="56dp"
+        android:text="🕹 SCAN REMOTE"
+        android:textSize="14sp" android:textStyle="bold"
+        android:backgroundTint="#0D1A2E" android:textColor="#14FFEC"
         android:layout_marginHorizontal="12dp" android:layout_marginBottom="8dp"
+        style="@style/Widget.MaterialComponents.Button"
+        app:layout_constraintBottom_toTopOf="@id/btnCalibrate"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"/>
+
+    <!-- Calibration button — fixed at bottom -->
+    <Button android:id="@+id/btnCalibrate"
+        android:layout_width="0dp" android:layout_height="56dp"
+        android:text="🧭 SENSOR CALIBRATION"
+        android:textSize="14sp" android:textStyle="bold"
+        android:backgroundTint="#0D1A2E" android:textColor="#14FFEC"
+        android:layout_marginHorizontal="12dp" android:layout_marginBottom="12dp"
         style="@style/Widget.MaterialComponents.Button"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"

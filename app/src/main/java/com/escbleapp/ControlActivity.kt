@@ -39,6 +39,7 @@ class ControlActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityControlBinding
     private lateinit var bleManager: AC6328BleManager
+    private var remoteBle: RemoteBleManager? = null   // optional BLE remote controller
     private val handler = Handler(Looper.getMainLooper())
 
     private var escMode = true
@@ -64,8 +65,9 @@ class ControlActivity : AppCompatActivity() {
     private var isConnected      = false
 
     companion object {
-        const val EXTRA_DEVICE      = "extra_device"
-        const val EXTRA_DEVICE_NAME = "extra_device_name"
+        const val EXTRA_DEVICE        = "extra_device"
+        const val EXTRA_DEVICE_NAME   = "extra_device_name"
+        const val EXTRA_REMOTE_DEVICE = "extra_remote_device"  // optional BLE remote
     }
 
     // ── Runnables ─────────────────────────────────────────────────────────────
@@ -102,6 +104,12 @@ class ControlActivity : AppCompatActivity() {
         setupGps()
         setupBackPress()
         updateUi(false)
+
+        // Connect remote if one was found in MainActivity scan
+        val remoteDevice: BluetoothDevice? = if (android.os.Build.VERSION.SDK_INT >= 33)
+            intent.getParcelableExtra(EXTRA_REMOTE_DEVICE, BluetoothDevice::class.java)
+        else @Suppress("DEPRECATION") intent.getParcelableExtra(EXTRA_REMOTE_DEVICE)
+        remoteDevice?.let { connectRemote(it) }
     }
 
     override fun onDestroy() {
@@ -111,6 +119,8 @@ class ControlActivity : AppCompatActivity() {
         gpsManager.stopPhoneGps()
         if (isConnected) { bleManager.stopMotors(); bleManager.disconnect().enqueue() }
         bleManager.close()
+        remoteBle?.disconnect()?.enqueue()
+        remoteBle?.close()
     }
 
     // ── Mode helpers ──────────────────────────────────────────────────────────
@@ -302,9 +312,14 @@ class ControlActivity : AppCompatActivity() {
                 putExtra(AutopilotActivity.EXTRA_DEVICE,      intent.getParcelableExtra<BluetoothDevice>(EXTRA_DEVICE))
                 putExtra(AutopilotActivity.EXTRA_DEVICE_NAME, intent.getStringExtra(EXTRA_DEVICE_NAME))
                 putExtra(AutopilotActivity.EXTRA_ESC_MODE,    escMode)
-                // Pass current throttle % so autopilot starts at same speed
                 val pct = valToPct(portVal)
                 putExtra(AutopilotActivity.EXTRA_INIT_SPEED_PCT, pct)
+                // Pass remote device so autopilot can also receive remote commands
+                remoteBle?.disconnect()?.enqueue()   // disconnect here — autopilot will reconnect
+                val remDev: BluetoothDevice? = if (android.os.Build.VERSION.SDK_INT >= 33)
+                    this@ControlActivity.intent.getParcelableExtra(EXTRA_REMOTE_DEVICE, BluetoothDevice::class.java)
+                else @Suppress("DEPRECATION") this@ControlActivity.intent.getParcelableExtra(EXTRA_REMOTE_DEVICE)
+                remDev?.let { putExtra(AutopilotActivity.EXTRA_REMOTE_DEVICE, it) }
             }
             startActivity(intent)
         }
@@ -603,5 +618,106 @@ class ControlActivity : AppCompatActivity() {
 
     private fun setupBackPress() {
         onBackPressedDispatcher.addCallback(this) { stopAll(); finish() }
+    }
+
+    // ── BLE Remote ────────────────────────────────────────────────────────────
+
+    @SuppressLint("SetTextI18n")
+    private fun connectRemote(device: BluetoothDevice) {
+        remoteBle = RemoteBleManager(this)
+        remoteBle!!.onConnected    = { runOnUiThread { binding.tvRemoteStatus.text = "🕹 ${device.name ?: "Remote"}" } }
+        remoteBle!!.onDisconnected = { runOnUiThread { binding.tvRemoteStatus.text = "" } }
+        remoteBle!!.onRemoteCommand = { cmd -> runOnUiThread { handleRemoteCommand(cmd) } }
+        remoteBle!!.connectToDevice(device)
+    }
+
+    @SuppressLint("SetTextI18n")
+    private fun handleRemoteCommand(cmd: RemoteBleManager.RemoteCommand) {
+        if (!isConnected) return
+        val step5 = if (escMode)
+            (AC6328BleManager.ESC_MAX - AC6328BleManager.ESC_MIN) * RemoteBleManager.SPEED_STEP / 100
+        else AC6328BleManager.BLDC_MAX * RemoteBleManager.SPEED_STEP / 100
+        val step1 = if (escMode)
+            (AC6328BleManager.ESC_MAX - AC6328BleManager.ESC_MIN) * RemoteBleManager.SPEED_STEP_1 / 100
+        else AC6328BleManager.BLDC_MAX * RemoteBleManager.SPEED_STEP_1 / 100
+        val range = maxValue() - stopValue()
+
+        when {
+            // Both motors
+            cmd.isStop        -> { stopAll(); showToast("Remote: STOP") }
+            cmd.isSpeedUp     -> {
+                portVal = (portVal + step5).coerceAtMost(maxValue())
+                starboardVal = (starboardVal + step5).coerceAtMost(maxValue())
+                syncAllDisplays(); triggerSend()
+            }
+            cmd.isSpeedDown   -> {
+                portVal = (portVal - step5).coerceAtLeast(stopValue())
+                starboardVal = (starboardVal - step5).coerceAtLeast(stopValue())
+                syncAllDisplays(); triggerSend()
+            }
+            cmd.isSpeedUp1    -> {
+                portVal = (portVal + step1).coerceAtMost(maxValue())
+                starboardVal = (starboardVal + step1).coerceAtMost(maxValue())
+                syncAllDisplays(); triggerSend()
+            }
+            cmd.isSpeedDown1  -> {
+                portVal = (portVal - step1).coerceAtLeast(stopValue())
+                starboardVal = (starboardVal - step1).coerceAtLeast(stopValue())
+                syncAllDisplays(); triggerSend()
+            }
+            cmd.isSetBothSpeed -> {
+                portVal = stopValue() + range * cmd.bothSpeedPct / 100
+                starboardVal = portVal
+                syncAllDisplays(); triggerSend()
+            }
+
+            // Sync toggle
+            cmd.isSyncOn  -> { binding.switchSync.isChecked = true  }
+            cmd.isSyncOff -> { binding.switchSync.isChecked = false }
+
+            // PORT motor
+            cmd.isPortCmd && cmd.isMotorUp       -> {
+                portVal = (portVal + step5).coerceAtMost(maxValue())
+                refreshPort(); triggerSend()
+            }
+            cmd.isPortCmd && cmd.isMotorDown     -> {
+                portVal = (portVal - step5).coerceAtLeast(stopValue())
+                refreshPort(); triggerSend()
+            }
+            cmd.isPortCmd && cmd.isMotorUp1      -> {
+                portVal = (portVal + step1).coerceAtMost(maxValue())
+                refreshPort(); triggerSend()
+            }
+            cmd.isPortCmd && cmd.isMotorDown1    -> {
+                portVal = (portVal - step1).coerceAtLeast(stopValue())
+                refreshPort(); triggerSend()
+            }
+            cmd.isPortCmd && cmd.isMotorAbsolute -> {
+                portVal = stopValue() + range * cmd.motorAbsPct / 100
+                refreshPort(); triggerSend()
+            }
+
+            // STBD motor
+            cmd.isStbdCmd && cmd.isMotorUp       -> {
+                starboardVal = (starboardVal + step5).coerceAtMost(maxValue())
+                refreshStbd(); triggerSend()
+            }
+            cmd.isStbdCmd && cmd.isMotorDown     -> {
+                starboardVal = (starboardVal - step5).coerceAtLeast(stopValue())
+                refreshStbd(); triggerSend()
+            }
+            cmd.isStbdCmd && cmd.isMotorUp1      -> {
+                starboardVal = (starboardVal + step1).coerceAtMost(maxValue())
+                refreshStbd(); triggerSend()
+            }
+            cmd.isStbdCmd && cmd.isMotorDown1    -> {
+                starboardVal = (starboardVal - step1).coerceAtLeast(stopValue())
+                refreshStbd(); triggerSend()
+            }
+            cmd.isStbdCmd && cmd.isMotorAbsolute -> {
+                starboardVal = stopValue() + range * cmd.motorAbsPct / 100
+                refreshStbd(); triggerSend()
+            }
+        }
     }
 }

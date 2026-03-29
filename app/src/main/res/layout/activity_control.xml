@@ -20,6 +20,12 @@
                 android:layout_height="wrap_content" android:layout_weight="1"
                 android:text="Connecting…" android:textColor="#CCFFFFFF"
                 android:textSize="13sp" android:fontFamily="monospace"/>
+            <!-- Remote status -->
+            <TextView android:id="@+id/tvRemoteStatus"
+                android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:text="" android:textColor="#55CCFF"
+                android:textSize="11sp" android:fontFamily="monospace"
+                android:layout_marginEnd="4dp"/>
             <TextView android:id="@+id/tvDeviceName" android:layout_width="wrap_content"
                 android:layout_height="wrap_content" android:text="—"
                 android:textColor="#14FFEC" android:textSize="13sp" android:fontFamily="monospace"/>
