@@ -374,8 +374,12 @@ class SensorFusion {
         var sigmaGyro:  Float = 0.5f
         /** Gyro bias random-walk noise per second. Default 0.005. */
         var sigmaDrift: Float = 0.005f
-        /** Base mag measurement noise in degrees. Default 5°. */
-        var sigmaMag:   Float = 5f
+        /**
+         * Base mag measurement noise in degrees. Default 15°.
+         * Raise if heading jumps when tilting. Lower if mag is very stable.
+         * Effective R_mag = sigmaMag² × tiltPenalty × seaPenalty.
+         */
+        var sigmaMag:   Float = 15f
         /** Base GPS measurement noise in degrees. Default 2°. */
         var sigmaGps:   Float = 2f
 
@@ -413,23 +417,34 @@ class SensorFusion {
             while (innov < -180f) innov += 360f
 
             // S = H P Hᵀ + R = p00 + R
-            val S = p00 + measurementNoise
+            val R = measurementNoise.coerceAtLeast(0.01f)
+            val S = p00 + R
             if (S <= 0f) return
 
-            // K = P Hᵀ / S  →  K = [p00/S, p10/S]
+            // K = P Hᵀ / S  →  K = [k0, k1] = [p00/S, p10/S]
             val k0 = p00 / S
             val k1 = p10 / S
 
             // State update
             theta = wrapAngle(theta + k0 * innov)
-            bias  = bias  + k1 * innov        // runtime bias correction
+            bias  = (bias  + k1 * innov).coerceIn(-10f, 10f)  // clamp bias: ±10°/s max
 
-            // Covariance update  P = (I - K H) P
-            val p00New = (1f - k0) * p00
-            val p01New = (1f - k0) * p01
-            val p10New = p10 - k1 * p00
-            val p11New = p11 - k1 * p01
-            p00 = p00New; p01 = p01New; p10 = p10New; p11 = p11New
+            // Covariance update — Joseph form for numerical stability:
+            // P = (I - KH) P (I - KH)ᵀ + K R Kᵀ
+            // With H=[1,0]:  (I-KH) = [[1-k0, 0], [-k1, 1]]
+            val a00 = 1f - k0;  val a01 = 0f
+            val a10 = -k1;      val a11 = 1f
+            // Temp = (I-KH) * P
+            val t00 = a00*p00 + a01*p10;  val t01 = a00*p01 + a01*p11
+            val t10 = a10*p00 + a11*p10;  val t11 = a10*p01 + a11*p11
+            // P = Temp * (I-KH)ᵀ + K*R*Kᵀ
+            p00 = t00*a00 + t01*a01 + k0*R*k0
+            p01 = t00*a10 + t01*a11 + k0*R*k1
+            p10 = t10*a00 + t11*a01 + k1*R*k0
+            p11 = t10*a10 + t11*a11 + k1*R*k1
+            // Floor: prevent P going negative due to floating point
+            p00 = p00.coerceAtLeast(1e-4f)
+            p11 = p11.coerceAtLeast(1e-6f)
         }
 
         private fun wrapAngle(a: Float): Float {
@@ -544,14 +559,14 @@ class SensorFusion {
             if (!kalman.initialised) kalman.init(magHeading)
             // Predict: propagate with gyro
             kalman.predict(gyroZDegS, dtS)
-            // Update with magnetometer (H=[1,0])
-            // R_mag = σ²_mag × (1+tilt)² × (1+seaState)  — higher when tilted/rough
+            // R_mag: higher when tilted (mag unreliable) or rough sea
             val rMag = kalman.sigmaMag * kalman.sigmaMag *
                     (1f + (1f - tiltFactor) * 2f) *
                     (1f + seaState)
             kalman.update(magHeading, rMag)
-            // Also update running gyro bias back into gyroBiasZ (slow track, 1%)
-            gyroBiasZ += (kalman.bias / gyroScaleDegS) * 0.01f
+            // NOTE: do NOT feed kalman.bias back into gyroBiasZ — the estimated
+            // bias includes any turn-rate residual during fast rotation and will
+            // corrupt the dock calibration. The Kalman bias is internal only.
             fused = kalman.theta
             filterLabel = "KF mag R=${"%.1f".format(rMag)} b=${"%.3f".format(kalman.bias)}"
         } else {
