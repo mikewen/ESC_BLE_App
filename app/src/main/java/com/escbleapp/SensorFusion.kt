@@ -43,7 +43,7 @@ class SensorFusion {
     /** Additional deadband per unit of sea state (0–1) */
     var seaDeadbandScale: Float = 12f
 
-    private var lastGyroZDegS: Float = 0f
+    var lastGyroZDegS: Float = 0f
 
     // ── State ─────────────────────────────────────────────────────────────────
 
@@ -58,6 +58,7 @@ class SensorFusion {
         val satellites:           Int     = 0,
         val headingConf:          Float   = 0f,    // 0.0 = unreliable … 1.0 = fully trusted
         val seaState:             Float   = 0f,    // 0 = calm … 1 = rough
+        val tiltDeg:              Float   = 0f,    // Pitch/roll magnitude from accel
         val autoDeadbandDeg:      Float   = 2f,    // deadband adjusted for sea state
         val magCalibrated:        Boolean = false, // GPS auto-cal of MMC5603 complete
         val rawMagHeadingDeg:     Float   = 0f,    // Raw tilt-compensated magnetometer heading
@@ -563,6 +564,7 @@ class SensorFusion {
             headingDeg      = fused,
             hasHeading      = true,
             seaState        = seaState,
+            tiltDeg         = tiltDeg,
             autoDeadbandDeg = autoDeadband,
             magCalibrated   = magCalibrated,
             rawMagHeadingDeg = rawMagHeading,
@@ -589,8 +591,8 @@ class SensorFusion {
     // ── 0xA2 — LC02H GNSS heading (1 Hz) ─────────────────────────────────────
 
     // Cache latest RMC values from A3 packet for blending with A2
-    private var cachedRmcHeading = 0f
-    private var cachedRmcSpeed   = 0f
+    var cachedRmcHeading = 0f
+    var cachedRmcSpeed   = 0f
     private var cachedRmcValid   = false
 
     /**

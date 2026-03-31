@@ -47,6 +47,7 @@ class AutopilotActivity : AppCompatActivity() {
     private lateinit var bleManager: AC6328BleManager
     private lateinit var gpsManager: GpsManager
     private var remoteBle: RemoteBleManager? = null
+    private val apLogger = AutopilotLogger()
     private val handler = Handler(Looper.getMainLooper())
 
     // ── Mode ──────────────────────────────────────────────────────────────────
@@ -344,58 +345,62 @@ class AutopilotActivity : AppCompatActivity() {
 
         val dt    = CONTROL_INTERVAL_MS / 1000f
         val error = headingError(targetHeading, actualHeading)
+        val fusionState = gpsManager.fusion.getState()
 
-        // Deadband — zero correction inside the band, reset integral to prevent windup
         if (Math.abs(error) < deadbandDeg) {
-            //headingIntegral = 0f
-            // Decay instead of reset → keeps bias compensation (wind/current)
             headingIntegral *= 0.8f
             sendMotors(baseSpeedPct, baseSpeedPct)
             updateMotorDisplay(baseSpeedPct, baseSpeedPct, error)
+            // Log: in deadband — zero correction
+            apLogger.logCtrl(
+                targetHdg = targetHeading, actualHdg = actualHeading,
+                magHdg = fusionState.rawMagHeadingDeg, error = error,
+                deadband = deadbandDeg, inDeadband = true,
+                pTerm = 0f, iTerm = 0f, integral = headingIntegral,
+                rawDiff = 0f, finalDiff = 0f,
+                baseSpeed = baseSpeedPct, portPct = baseSpeedPct, stbdPct = baseSpeedPct,
+                conf = headingConfidence, speedKt = gpsManager.getCurrentData().speedKnots,
+                lat = fusionState.latDeg, lon = fusionState.lonDeg,
+                seaState = fusionState.seaState, autoDeadband = fusionState.autoDeadbandDeg,
+                useKalman = gpsManager.fusion.useKalman, kalmanBias = gpsManager.fusion.kalman.bias,
+                source = fusionState.source
+            )
             return
         }
 
-//        // Integrate with anti-windup
-//        headingIntegral = (headingIntegral + error * dt)
-//            .coerceIn(-MAX_INTEGRAL, MAX_INTEGRAL)
-//
-//        // PI output scaled by heading confidence (from sAcc vs speed ratio)
-//        val rawDiff = (error * Kp + headingIntegral * Ki) * headingConfidence
-//        val diff    = rawDiff.toInt().coerceIn(-MAX_DIFF_PCT, MAX_DIFF_PCT)
-//
-//        val portPct = (baseSpeedPct + diff).coerceIn(0, 100)
-//        val stbdPct = (baseSpeedPct - diff).coerceIn(0, 100)
-// --- Improved PI control with actuator-aware limiting and anti-windup ---
-
-// Candidate integral
-        val newIntegral = (headingIntegral + error * dt)
-            .coerceIn(-MAX_INTEGRAL, MAX_INTEGRAL)
-
-// PI output (float — DO NOT quantize yet)
-        val rawDiff = (error * Kp + newIntegral * Ki) * headingConfidence
-
-// speed-based scaling (helps across different boats)
+        val newIntegral = (headingIntegral + error * dt).coerceIn(-MAX_INTEGRAL, MAX_INTEGRAL)
+        val pTerm   = error * Kp
+        val iTerm   = newIntegral * Ki
+        val rawDiff = (pTerm + iTerm) * headingConfidence
         val speedFactor = (50f / max(baseSpeedPct, 10)).coerceIn(0.5f, 2.0f)
-        val scaledDiff = rawDiff * speedFactor
+        val scaledDiff  = rawDiff * speedFactor
+        val diff        = scaledDiff.coerceIn(-MAX_DIFF_PCT.toFloat(), MAX_DIFF_PCT.toFloat())
 
-// Clamp to controller limits
-        val diff = scaledDiff.coerceIn(-MAX_DIFF_PCT.toFloat(), MAX_DIFF_PCT.toFloat())
+        if (abs(diff) < MAX_DIFF_PCT) headingIntegral = newIntegral
 
-// Anti-windup: only accept integral if not saturated
-        if (abs(diff) < MAX_DIFF_PCT) {
-            headingIntegral = newIntegral
-        }
-
-// Actuator-aware symmetric limiting (CRITICAL FIX)
         val maxDiffAllowed = min(baseSpeedPct, 100 - baseSpeedPct)
         val finalDiff = diff.coerceIn(-maxDiffAllowed.toFloat(), maxDiffAllowed.toFloat())
 
-// Convert to motor commands (NOW quantize)
         val portPct = (baseSpeedPct + finalDiff).roundToInt()
         val stbdPct = (baseSpeedPct - finalDiff).roundToInt()
 
         sendMotors(portPct, stbdPct)
         updateMotorDisplay(portPct, stbdPct, error)
+
+        // Log CTRL row with full PI internals
+        apLogger.logCtrl(
+            targetHdg = targetHeading, actualHdg = actualHeading,
+            magHdg = fusionState.rawMagHeadingDeg, error = error,
+            deadband = deadbandDeg, inDeadband = false,
+            pTerm = pTerm, iTerm = iTerm, integral = headingIntegral,
+            rawDiff = rawDiff, finalDiff = finalDiff,
+            baseSpeed = baseSpeedPct, portPct = portPct, stbdPct = stbdPct,
+            conf = headingConfidence, speedKt = gpsManager.getCurrentData().speedKnots,
+            lat = fusionState.latDeg, lon = fusionState.lonDeg,
+            seaState = fusionState.seaState, autoDeadband = fusionState.autoDeadbandDeg,
+            useKalman = gpsManager.fusion.useKalman, kalmanBias = gpsManager.fusion.kalman.bias,
+            source = fusionState.source
+        )
     }
 
     /** Heading error wrapped to ±180° */
@@ -407,13 +412,18 @@ class AutopilotActivity : AppCompatActivity() {
     }
 
     private fun sendMotors(portPct: Int, stbdPct: Int) {
+        val portDuty: Int
+        val stbdDuty: Int
         if (escMode) {
-            // ESC duty 500–1000: map 0–100% into that 500-unit range
-            bleManager.sendEscPwm(500 + portPct * 5, 500 + stbdPct * 5)
+            portDuty = 500 + portPct * 5
+            stbdDuty = 500 + stbdPct * 5
+            bleManager.sendEscPwm(portDuty, stbdDuty)
         } else {
-            // BLDC duty 0–10000: map 0–100% directly
-            bleManager.sendBldc(portPct * 100, stbdPct * 100)
+            portDuty = portPct * 100
+            stbdDuty = stbdPct * 100
+            bleManager.sendBldc(portDuty, stbdDuty)
         }
+        apLogger.logCmd(portPct, stbdPct, portDuty, stbdDuty, escMode)
     }
 
     // ── Engage / Disengage ────────────────────────────────────────────────────
@@ -443,11 +453,16 @@ class AutopilotActivity : AppCompatActivity() {
         binding.btnEngage.setTextColor(android.graphics.Color.parseColor("#0A1628"))
         vibrate(80)
         handler.post(controlRunnable)
+
+        // Start autopilot log — logs CTRL+CMD rows each tick, SENS from GpsManager
+        val path = apLogger.start()
+        gpsManager.autopilotLogger = apLogger   // wire sensor rows
+        if (path != null) showToast("📝 Logging: ${path.substringAfterLast('/')}")
     }
 
     private fun disengage() {
         engaged = false
-        headingIntegral = 0f          // reset integral — don't carry stale state to next engage
+        headingIntegral = 0f
         handler.removeCallbacks(controlRunnable)
         binding.tvApStatus.text = "✈ AUTOPILOT · STANDBY"
         binding.btnEngage.backgroundTintList =
@@ -455,6 +470,11 @@ class AutopilotActivity : AppCompatActivity() {
         binding.btnEngage.setTextColor(android.graphics.Color.parseColor("#14FFEC"))
         if (isConnected) bleManager.stopMotors()
         updateMotorDisplay(0, 0, 0f)
+
+        // Stop log
+        gpsManager.autopilotLogger = null
+        apLogger.stop()
+        apLogger.logFilePath?.let { showToast("📝 Saved: ${it.substringAfterLast('/')}") }
     }
 
     private fun setupEngageButtons() {

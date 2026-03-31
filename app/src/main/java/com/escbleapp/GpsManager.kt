@@ -90,6 +90,9 @@ class GpsManager(private val context: Context) {
     var onNmeaDebug: ((String)  -> Unit)? = null
     var onLogStatus: ((String)  -> Unit)? = null
 
+    /** Set by AutopilotActivity on engage — receives SENS and GPS log rows. */
+    var autopilotLogger: AutopilotLogger? = null
+
     // ── Hardware configuration ────────────────────────────────────────────────
     /**
      * Set true if QMI8658C accelerometer X/Y axes are mounted 180° from MMC5603
@@ -308,10 +311,21 @@ class GpsManager(private val context: Context) {
                 val mx  = getI2(b, 14); val my = getI2(b, 16); val mz = getI2(b, 18)
                 fusion.processA1(ax, ay, az, gx, gy, gz, mx, my, mz,
                     System.currentTimeMillis(), accelRotated180)
+                // SENS log row — decimated to senseSampleHz (default 10 Hz)
+                val fsA1 = fusion.getState()
+                autopilotLogger?.logSens(
+                    ax = ax, ay = ay, az = az,
+                    gx = gx, gy = gy, gz = gz,
+                    mx = mx, my = my, mz = mz,
+                    rawMagHdg = fsA1.rawMagHeadingDeg,
+                    fusedHdg  = fsA1.headingDeg,
+                    gyroZDps  = fusion.lastGyroZDegS,
+                    tiltDeg   = fsA1.tiltDeg,
+                    seaState  = fsA1.seaState
+                )
             }
             0xA2.toByte() -> {
                 if (b.size < 17) return
-                // val timeMs  = buf.getInt(1).toLong() and 0xFFFFFFFFL  // not used in fusion
                 val quality    = b[5].toInt() and 0xFF
                 val pitch      = buf.getShort(8)  / 100.0f
                 val roll       = buf.getShort(10) / 100.0f
@@ -327,6 +341,21 @@ class GpsManager(private val context: Context) {
                     gnssQuality   = quality,
                     satellites    = usedSV,
                     nowMs         = System.currentTimeMillis()
+                )
+                // GPS log row — every A2 (1 Hz)
+                val fs = fusion.getState()
+                autopilotLogger?.logGps(
+                    tarHdg      = heading,
+                    rmcCog      = fusion.cachedRmcHeading,
+                    blendedHdg  = fs.headingDeg,
+                    gnssQuality = quality,
+                    tarAccDeg   = accHeading,
+                    satellites  = usedSV,
+                    speedKt     = fusion.cachedRmcSpeed,
+                    lat         = fs.latDeg,
+                    lon         = fs.lonDeg,
+                    misalignDeg = fs.tarMisalignDeg,
+                    misalignCal = fs.tarMisalignCalibrated
                 )
             }
             0xA3.toByte() -> {
