@@ -319,7 +319,6 @@ class SensorFusion {
         while (diff >  180f) diff -= 360f
         while (diff < -180f) diff += 360f
         val maxStep    = maxHeadingRateDegS * dtS
-        //val correction = diff.coerceIn(-maxStep, maxStep)
         val damping = 0.3f * gyroZDegS  // add derivative damping
         val correction = (diff - damping).coerceIn(-maxStep, maxStep)
         filteredHeading = ((gyroHeading + sensorWeight * correction) + 360f) % 360f
@@ -327,7 +326,119 @@ class SensorFusion {
     }
 
     /** Reset filter — call when source changes or after long gap */
-    fun resetFilter() { filterInitialised = false }
+    fun resetFilter() {
+        filterInitialised = false
+        kalman.reset()
+    }
+
+    // ── Kalman filter ─────────────────────────────────────────────────────────
+    //
+    // State:  x = [θ (heading °),  b (gyro-Z bias °/s)]   (2×1)
+    //
+    // Predict step (every A1 at 50 Hz):
+    //   θ_pred = θ + (gz_raw − b) × dt
+    //   b_pred = b                          (bias random walk)
+    //   P_pred = F P Fᵀ + Q
+    //   F = [[1, −dt], [0, 1]]
+    //   Q = diag([σ²_gyro × dt, σ²_drift × dt])
+    //
+    // Update step — Mag (up to 50 Hz, but low weight):
+    //   H = [1, 0]
+    //   R_mag = σ²_mag × (1 + tiltFactor²) × (1 + seaState)
+    //
+    // Update step — GNSS (1 Hz):
+    //   H = [1, 0]
+    //   R_gps = (tarAccDeg)² / qualFactor       uses PQTMTAR accuracy directly
+    //
+    // After each update the estimated bias b is also used to correct GyroBiasZ
+    // in real time (slow tracking), complementing the dock calibration.
+
+    /**
+     * Switch between Kalman (true) and complementary (false) filter.
+     * Default false — complementary is proven; switch to Kalman for testing.
+     */
+    var useKalman: Boolean = false
+
+    inner class KalmanHeading {
+        // State
+        var theta: Float = 0f       // heading °
+        var bias:  Float = 0f       // gyro-Z bias °/s (runtime estimate)
+        // Covariance matrix P (2×2, stored as p00, p01, p10, p11)
+        var p00: Float = 10f;  var p01: Float = 0f
+        var p10: Float = 0f;   var p11: Float = 1f
+        var initialised: Boolean = false
+
+        // ── Noise tuning (all in degrees or deg/s) ──────────────────────────
+        /** Gyro measurement noise: how much gz jitter in °/s. Default 0.5. */
+        var sigmaGyro:  Float = 0.5f
+        /** Gyro bias random-walk noise per second. Default 0.005. */
+        var sigmaDrift: Float = 0.005f
+        /** Base mag measurement noise in degrees. Default 5°. */
+        var sigmaMag:   Float = 5f
+        /** Base GPS measurement noise in degrees. Default 2°. */
+        var sigmaGps:   Float = 2f
+
+        fun reset() { initialised = false; bias = 0f; p00=10f; p01=0f; p10=0f; p11=1f }
+
+        /** Seed the filter on first measurement. */
+        fun init(headingDeg: Float) {
+            theta = headingDeg; initialised = true
+        }
+
+        // ── Predict — called every A1 (50 Hz) ───────────────────────────────
+        fun predict(gzDegS: Float, dtS: Float) {
+            if (!initialised) return
+            // State propagation
+            val thetaNew = wrapAngle(theta + (gzDegS - bias) * dtS)
+            // F = [[1, -dt], [0, 1]]
+            // P_new = F P Fᵀ + Q
+            val qTheta = sigmaGyro  * sigmaGyro  * dtS
+            val qBias  = sigmaDrift * sigmaDrift * dtS
+            val p00New = p00 - dtS * (p10 + p01) + dtS * dtS * p11 + qTheta
+            val p01New = p01 - dtS * p11
+            val p10New = p10 - dtS * p11
+            val p11New = p11 + qBias
+            theta = thetaNew
+            p00 = p00New; p01 = p01New; p10 = p10New; p11 = p11New
+        }
+
+        // ── Update — called when a new absolute heading measurement arrives ──
+        // measurementNoise: R value in degrees² for this measurement
+        fun update(measuredDeg: Float, measurementNoise: Float) {
+            if (!initialised) { init(measuredDeg); return }
+            // H = [1, 0]  →  innovation = z - H*x
+            var innov = measuredDeg - theta
+            while (innov >  180f) innov -= 360f
+            while (innov < -180f) innov += 360f
+
+            // S = H P Hᵀ + R = p00 + R
+            val S = p00 + measurementNoise
+            if (S <= 0f) return
+
+            // K = P Hᵀ / S  →  K = [p00/S, p10/S]
+            val k0 = p00 / S
+            val k1 = p10 / S
+
+            // State update
+            theta = wrapAngle(theta + k0 * innov)
+            bias  = bias  + k1 * innov        // runtime bias correction
+
+            // Covariance update  P = (I - K H) P
+            val p00New = (1f - k0) * p00
+            val p01New = (1f - k0) * p01
+            val p10New = p10 - k1 * p00
+            val p11New = p11 - k1 * p01
+            p00 = p00New; p01 = p01New; p10 = p10New; p11 = p11New
+        }
+
+        private fun wrapAngle(a: Float): Float {
+            var r = a % 360f
+            if (r < 0f) r += 360f
+            return r
+        }
+    }
+
+    val kalman = KalmanHeading()
 
     // ── 0xA1 — IMU + Mag (50 Hz) ─────────────────────────────────────────────
 
@@ -425,7 +536,28 @@ class SensorFusion {
         val magWeight = (magBase * tiltFactor * gnssFactor * speedFactor)
             .coerceIn(0.01f, 0.35f) // Lower min bound to allow very low mag influence
 
-        val fused = applyFilter(magHeading, gyroZDegS, magWeight, dtS)
+        val fused: Float
+        val filterLabel: String
+        if (useKalman) {
+            // ── Kalman path ───────────────────────────────────────────────────
+            if (!kalman.initialised) kalman.init(magHeading)
+            // Predict: propagate with gyro
+            kalman.predict(gyroZDegS, dtS)
+            // Update with magnetometer (H=[1,0])
+            // R_mag = σ²_mag × (1+tilt)² × (1+seaState)  — higher when tilted/rough
+            val rMag = kalman.sigmaMag * kalman.sigmaMag *
+                    (1f + (1f - tiltFactor) * 2f) *
+                    (1f + seaState)
+            kalman.update(magHeading, rMag)
+            // Also update running gyro bias back into gyroBiasZ (slow track, 1%)
+            gyroBiasZ += (kalman.bias / gyroScaleDegS) * 0.01f
+            fused = kalman.theta
+            filterLabel = "KF mag R=${"%.1f".format(rMag)} b=${"%.3f".format(kalman.bias)}"
+        } else {
+            // ── Complementary path ────────────────────────────────────────────
+            fused = applyFilter(magHeading, gyroZDegS, magWeight, dtS)
+            filterLabel = "CF w=${"%.4f".format(magWeight)}"
+        }
 
         state = state.copy(
             headingDeg      = fused,
@@ -434,8 +566,8 @@ class SensorFusion {
             autoDeadbandDeg = autoDeadband,
             magCalibrated   = magCalibrated,
             rawMagHeadingDeg = rawMagHeading,
-            source          = "imu+mag",
-            debugMsg        = "A1: gz=${"%.2f".format(gyroZDegS)} mag=${"%.1f".format(magHeading)} tilt=${"%.1f".format(tiltDeg)} sea=${"%.2f".format(seaState)} db=${"%.1f".format(autoDeadband)}° w=${"%.4f".format(magWeight)} → ${"%.1f".format(fused)}"
+            source          = if (useKalman) "kf:imu+mag" else "cf:imu+mag",
+            debugMsg        = "A1: gz=${"%.2f".format(gyroZDegS)} mag=${"%.1f".format(magHeading)} tilt=${"%.1f".format(tiltDeg)} sea=${"%.2f".format(seaState)} db=${"%.1f".format(autoDeadband)}° $filterLabel → ${"%.1f".format(fused)}"
         )
         onFusedHeading?.invoke(state)
     }
@@ -525,15 +657,28 @@ class SensorFusion {
         val filterW = (0.05f + conf * 0.15f).coerceIn(0.05f, 0.20f)
 
         lastGnssTimeMs = nowMs
-        // Estimate turn rate from last IMU update (deg/s)
-        //val turnRate = abs(state.debugMsg.substringAfter("gz=").substringBefore(" ").toFloatOrNull() ?: 0f)
-        //val fused = applyFilter(blended, 0f, filterW, 0.1f)
         val turnRate = abs(lastGyroZDegS)
 
-        // Reduce GNSS influence when turning
-        val turnFactor = (1f - turnRate / 20f).coerceIn(0.2f, 1f)
-        val dynamicW = filterW * turnFactor
-        val fused = applyFilter(blended, 0f, dynamicW, 0.1f)
+        val fused: Float
+        val filterLabel: String
+        if (useKalman) {
+            // ── Kalman GNSS update ────────────────────────────────────────────
+            // R_gps = tarAccDeg² / qualFactor — uses PQTMTAR accuracy field directly
+            // Clamp tarAccDeg to avoid R=∞ when accuracy=0
+            val accDegClamped = tarAccDeg.coerceIn(0.1f, 30f)
+            val rGps = (accDegClamped * accDegClamped) / qualFactor.coerceAtLeast(0.1f)
+            // Down-weight during fast turns (GNSS heading lags real heading)
+            val turnPenalty = (1f + turnRate / 10f)
+            kalman.update(blended, rGps * turnPenalty)
+            fused = kalman.theta
+            filterLabel = "KF R=${"%.1f".format(rGps)} turn=${"%.1f".format(turnRate)}"
+        } else {
+            // ── Complementary GNSS correction ────────────────────────────────
+            val turnFactor = (1f - turnRate / 20f).coerceIn(0.2f, 1f)
+            val dynamicW = filterW * turnFactor
+            fused = applyFilter(blended, 0f, dynamicW, 0.1f)
+            filterLabel = "CF w=${"%.3f".format(filterW)} tf=${"%.2f".format(turnFactor)}"
+        }
 
         updateMagCalibration(
             gpsHeading    = blended,
@@ -553,8 +698,8 @@ class SensorFusion {
             magCalibrated         = magCalibrated,
             tarMisalignDeg        = tarMisalignEstimate,
             tarMisalignCalibrated = tarMisalignCalibrated,
-            source                = "gnss+imu",
-            debugMsg              = "A2: tar=${"%.1f".format(tarHeadingDeg)}${if (tarMisalignCalibrated) "(+${"%.1f".format(tarMisalignEstimate)}°)" else ""}(w=${"%.2f".format(wTar)}) rmc=${"%.1f".format(cachedRmcHeading)}(w=${"%.2f".format(wRmc)}) → ${"%.1f".format(fused)} conf=${"%.2f".format(conf)} spd=$speedKt"
+            source                = if (useKalman) "kf:gnss+imu" else "cf:gnss+imu",
+            debugMsg              = "A2: tar=${"%.1f".format(tarHeadingDeg)}${if (tarMisalignCalibrated) "(+${"%.1f".format(tarMisalignEstimate)}°)" else ""}(w=${"%.2f".format(wTar)}) rmc=${"%.1f".format(cachedRmcHeading)}(w=${"%.2f".format(wRmc)}) → ${"%.1f".format(fused)} conf=${"%.2f".format(conf)} $filterLabel"
         )
         onFusedHeading?.invoke(state)
     }

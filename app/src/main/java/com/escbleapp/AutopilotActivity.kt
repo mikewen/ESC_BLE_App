@@ -604,9 +604,17 @@ class AutopilotActivity : AppCompatActivity() {
         binding.switchAutoDeadband.setOnCheckedChangeListener { _, checked ->
             autoDeadbandEnabled = checked
             if (!checked) {
-                deadbandDeg = baseDeadbandDeg   // snap back to base immediately
+                deadbandDeg = baseDeadbandDeg
                 updateTuningDisplay()
             }
+        }
+
+        // Filter switch: Kalman ON = true, OFF = Complementary
+        binding.switchKalman.isChecked = gpsManager.fusion.useKalman
+        binding.switchKalman.setOnCheckedChangeListener { _, checked ->
+            gpsManager.fusion.useKalman = checked
+            gpsManager.fusion.resetFilter()   // reset both filters on switch
+            showToast(if (checked) "Filter: Kalman" else "Filter: Complementary")
         }
 
         binding.btnKpPlus.setOnClickListener        { adjustKp(+KP_STEP) }

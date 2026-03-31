@@ -417,10 +417,29 @@
                         android:layout_marginStart="2dp"/>
                 </LinearLayout>
 
+                <!-- Filter selector row -->
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical"
+                    android:layout_marginTop="8dp">
+                    <TextView android:text="FILTER" android:textColor="#88AABBCC"
+                        android:textSize="12sp" android:textStyle="bold"
+                        android:fontFamily="monospace" android:layout_width="0dp"
+                        android:layout_height="wrap_content" android:layout_weight="1"/>
+                    <TextView android:text="Complementary" android:textColor="#55AABBCC"
+                        android:textSize="11sp" android:fontFamily="monospace"
+                        android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/switchKalman"
+                        android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        android:checked="false" android:layout_marginHorizontal="6dp"
+                        app:thumbTint="#FFB300" app:trackTint="#2A2000"/>
+                    <TextView android:text="Kalman" android:textColor="#FFB300"
+                        android:textSize="11sp" android:fontFamily="monospace"
+                        android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                </LinearLayout>
+
             </LinearLayout>
         </androidx.cardview.widget.CardView>
-
-        <!-- ── LIVE MOTOR OUTPUT ── -->
         <androidx.cardview.widget.CardView android:layout_width="match_parent"
             android:layout_height="wrap_content" android:layout_marginHorizontal="12dp"
             android:layout_marginBottom="8dp" app:cardBackgroundColor="#080F1E"
