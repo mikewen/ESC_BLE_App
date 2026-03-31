@@ -101,6 +101,47 @@ class GpsManager(private val context: Context) {
      */
     var accelRotated180: Boolean = false
 
+    // ── Second BLE sensor ─────────────────────────────────────────────────────
+    // Optional AC6329C whose ae02 feeds the same SensorFusion instance.
+    // A1/A2/A3 from either sensor processed identically — just merge the streams.
+
+    private var sensor2Ble: AC6328BleManager? = null
+    var onSensor2Status: ((String) -> Unit)? = null
+
+    fun connectSensor2(device: android.bluetooth.BluetoothDevice, name: String) {
+        sensor2Ble?.disconnect()?.enqueue()
+        sensor2Ble?.close()
+        sensor2Ble = AC6328BleManager(context)
+        sensor2Ble!!.setConnectionObserver(object : no.nordicsemi.android.ble.observer.ConnectionObserver {
+            override fun onDeviceConnecting(d: android.bluetooth.BluetoothDevice)    = Unit
+            override fun onDeviceDisconnecting(d: android.bluetooth.BluetoothDevice) = Unit
+            override fun onDeviceReady(d: android.bluetooth.BluetoothDevice)         = Unit
+            override fun onDeviceConnected(d: android.bluetooth.BluetoothDevice) {
+                Log.i(TAG, "Sensor2 connected: $name")
+                onSensor2Status?.invoke("📡 $name")
+            }
+            override fun onDeviceFailedToConnect(d: android.bluetooth.BluetoothDevice, reason: Int) {
+                Log.w(TAG, "Sensor2 failed: $reason")
+                onSensor2Status?.invoke("📡 $name failed ($reason)")
+            }
+            override fun onDeviceDisconnected(d: android.bluetooth.BluetoothDevice, reason: Int) {
+                Log.i(TAG, "Sensor2 disconnected: $reason")
+                onSensor2Status?.invoke("")
+            }
+        })
+        sensor2Ble!!.onAe02Raw = { bytes -> feedAe02Bytes(bytes) }
+        sensor2Ble!!.connectToDevice(device)
+    }
+
+    fun disconnectSensor2() {
+        sensor2Ble?.disconnect()?.enqueue()
+        sensor2Ble?.close()
+        sensor2Ble = null
+        onSensor2Status?.invoke("")
+    }
+
+    val isSensor2Connected: Boolean get() = sensor2Ble != null
+
     var tripDistanceNm: Double = 0.0
         private set
     var maxSpeedKnots: Float = 0f
@@ -224,7 +265,10 @@ class GpsManager(private val context: Context) {
         catch (e: Exception)           { Log.e(TAG, "GPS start error: ${e.message}") }
     }
 
-    fun stopPhoneGps() { fusedClient.removeLocationUpdates(locationCallback) }
+    fun stopPhoneGps() {
+        fusedClient.removeLocationUpdates(locationCallback)
+        disconnectSensor2()
+    }
 
     fun hasLocationPermission() =
         ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==

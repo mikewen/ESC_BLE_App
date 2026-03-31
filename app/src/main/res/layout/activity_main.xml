@@ -105,9 +105,21 @@
         android:layout_width="0dp"
         android:layout_height="0dp"
         android:clipToPadding="false"
-        android:paddingBottom="130dp"
+        android:paddingBottom="190dp"
         app:layout_constraintTop_toBottomOf="@id/header"
         app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"/>
+
+    <!-- Sensor 2 scan button — above remote -->
+    <Button android:id="@+id/btnScanSensor2"
+        android:layout_width="0dp" android:layout_height="56dp"
+        android:text="🔬 SCAN SENSOR 2"
+        android:textSize="14sp" android:textStyle="bold"
+        android:backgroundTint="#0D1A2E" android:textColor="#88AABBCC"
+        android:layout_marginHorizontal="12dp" android:layout_marginBottom="4dp"
+        style="@style/Widget.MaterialComponents.Button"
+        app:layout_constraintBottom_toTopOf="@id/btnScanRemote"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent"/>
 

@@ -92,6 +92,8 @@ class AutopilotActivity : AppCompatActivity() {
         const val EXTRA_ESC_MODE         = "extra_esc_mode"
         const val EXTRA_INIT_SPEED_PCT   = "extra_init_speed_pct"
         const val EXTRA_REMOTE_DEVICE    = "extra_remote_device"
+        const val EXTRA_SENSOR2_DEVICE   = "extra_sensor2_device"
+        const val EXTRA_SENSOR2_NAME     = "extra_sensor2_name"
     }
 
     // Map picker result launcher
@@ -177,6 +179,19 @@ class AutopilotActivity : AppCompatActivity() {
             intent.getParcelableExtra(EXTRA_REMOTE_DEVICE, BluetoothDevice::class.java)
         else @Suppress("DEPRECATION") intent.getParcelableExtra(EXTRA_REMOTE_DEVICE)
         remoteDevice?.let { connectRemote(it) }
+
+        // Sensor2 — GpsManager keeps the connection from ControlActivity.
+        // Re-attach status callback; reconnect if needed (e.g. activity transition dropped it).
+        val sensor2Name = intent.getStringExtra(EXTRA_SENSOR2_NAME)
+        if (sensor2Name != null) {
+            gpsManager.onSensor2Status = { msg -> runOnUiThread { binding.tvSensor2Status.text = msg } }
+            if (!gpsManager.isSensor2Connected) {
+                val s2Dev: android.bluetooth.BluetoothDevice? = if (android.os.Build.VERSION.SDK_INT >= 33)
+                    intent.getParcelableExtra(EXTRA_SENSOR2_DEVICE, android.bluetooth.BluetoothDevice::class.java)
+                else @Suppress("DEPRECATION") intent.getParcelableExtra(EXTRA_SENSOR2_DEVICE)
+                s2Dev?.let { gpsManager.connectSensor2(it, sensor2Name) }
+            }
+        }
     }
 
     override fun onDestroy() {

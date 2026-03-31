@@ -58,6 +58,12 @@ class MainActivity : AppCompatActivity() {
     private var isRemoteScanning = false
     private val REMOTE_SCAN_PERIOD_MS = 10_000L
 
+    // Second sensor device — sensor-only AC6329C (no motor control needed)
+    // Its ae02 merges with the motor device's ae02 in GpsManager → same SensorFusion
+    private var sensor2Device: BluetoothDevice? = null
+    private var sensor2ScanCallback: android.bluetooth.le.ScanCallback? = null
+    private var isSensor2Scanning = false
+
     // Permission launcher
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -82,6 +88,10 @@ class MainActivity : AppCompatActivity() {
                 putExtra(ControlActivity.EXTRA_DEVICE, item.device)
                 putExtra(ControlActivity.EXTRA_DEVICE_NAME, item.name)
                 remoteDevice?.let { putExtra(ControlActivity.EXTRA_REMOTE_DEVICE, it) }
+                sensor2Device?.let {
+                    putExtra(ControlActivity.EXTRA_SENSOR2_DEVICE, it)
+                    putExtra(ControlActivity.EXTRA_SENSOR2_NAME, it.name ?: "Sensor2")
+                }
             }
             startActivity(intent)
         }
@@ -99,6 +109,9 @@ class MainActivity : AppCompatActivity() {
 
         binding.btnScanRemote.setOnClickListener { startRemoteScan() }
         updateRemoteButton()
+
+        binding.btnScanSensor2.setOnClickListener { startSensor2Scan() }
+        updateSensor2Button()
 
         binding.chipFilterEsc.setOnCheckedChangeListener { _, _ -> /* filter applied in callback */ }
     }
@@ -164,6 +177,73 @@ class MainActivity : AppCompatActivity() {
             else -> {
                 binding.btnScanRemote.text = "🕹 SCAN REMOTE"
                 binding.btnScanRemote.setTextColor(android.graphics.Color.parseColor("#88AABBCC"))
+            }
+        }
+    }
+
+    // ── Sensor 2 scan ─────────────────────────────────────────────────────────
+
+    @SuppressLint("MissingPermission")
+    private fun startSensor2Scan() {
+        if (sensor2Device != null) {
+            sensor2Device = null
+            updateSensor2Button()
+            return
+        }
+        if (isSensor2Scanning) return
+        val adapter = bluetoothAdapter ?: return
+        isSensor2Scanning = true
+        updateSensor2Button()
+
+        val cb = object : android.bluetooth.le.ScanCallback() {
+            override fun onScanResult(callbackType: Int, result: android.bluetooth.le.ScanResult) {
+                val name = result.device.name ?: return
+                // Same name filter as motor device scan — any AC6329C/GPS/IMU device
+                val sensorNames = listOf("AC6329", "GPS_PWM", "IMU_PWM", "ESC_PWM", "BLDC_PWM")
+                val match = sensorNames.any { name.contains(it, true) }
+                // Don't pick up the same device twice (already in the motor device list)
+                if (match && devices.none { it.address == result.device.address }) {
+                    stopSensor2Scan()
+                    sensor2Device = result.device
+                    runOnUiThread { updateSensor2Button() }
+                    Toast.makeText(this@MainActivity, "Sensor 2 found: $name", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+        sensor2ScanCallback = cb
+        adapter.bluetoothLeScanner?.startScan(null,
+            android.bluetooth.le.ScanSettings.Builder()
+                .setScanMode(android.bluetooth.le.ScanSettings.SCAN_MODE_LOW_LATENCY).build(), cb)
+        handler.postDelayed({
+            stopSensor2Scan()
+            if (sensor2Device == null)
+                runOnUiThread { Toast.makeText(this, "No sensor 2 found", Toast.LENGTH_SHORT).show() }
+        }, REMOTE_SCAN_PERIOD_MS)
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun stopSensor2Scan() {
+        if (!isSensor2Scanning) return
+        isSensor2Scanning = false
+        sensor2ScanCallback?.let { bluetoothAdapter?.bluetoothLeScanner?.stopScan(it) }
+        sensor2ScanCallback = null
+        runOnUiThread { updateSensor2Button() }
+    }
+
+    @SuppressLint("SetTextI18n")
+    private fun updateSensor2Button() {
+        when {
+            isSensor2Scanning -> {
+                binding.btnScanSensor2.text = "Scanning…"
+                binding.btnScanSensor2.setTextColor(android.graphics.Color.parseColor("#FFB300"))
+            }
+            sensor2Device != null -> {
+                binding.btnScanSensor2.text = "📡 ${sensor2Device!!.name ?: "Sensor2"} ✓"
+                binding.btnScanSensor2.setTextColor(android.graphics.Color.parseColor("#14FFEC"))
+            }
+            else -> {
+                binding.btnScanSensor2.text = "📡 SCAN SENSOR 2"
+                binding.btnScanSensor2.setTextColor(android.graphics.Color.parseColor("#88AABBCC"))
             }
         }
     }
