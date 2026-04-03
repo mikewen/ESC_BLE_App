@@ -90,7 +90,7 @@ class MainActivity : AppCompatActivity() {
                 remoteDevice?.let { putExtra(ControlActivity.EXTRA_REMOTE_DEVICE, it) }
                 sensor2Device?.let {
                     putExtra(ControlActivity.EXTRA_SENSOR2_DEVICE, it)
-                    putExtra(ControlActivity.EXTRA_SENSOR2_NAME, it.name ?: "Sensor2")
+                    putExtra(ControlActivity.EXTRA_SENSOR2_NAME, it.name ?: "IMU Sensor")
                 }
             }
             startActivity(intent)
@@ -234,15 +234,15 @@ class MainActivity : AppCompatActivity() {
     private fun updateSensor2Button() {
         when {
             isSensor2Scanning -> {
-                binding.btnScanSensor2.text = "Scanning…"
+                binding.btnScanSensor2.text = "🔬 Scanning IMU sensor…"
                 binding.btnScanSensor2.setTextColor(android.graphics.Color.parseColor("#FFB300"))
             }
             sensor2Device != null -> {
-                binding.btnScanSensor2.text = "📡 ${sensor2Device!!.name ?: "Sensor2"} ✓"
+                binding.btnScanSensor2.text = "🔬 IMU: ${sensor2Device!!.name ?: "Sensor"} ✓"
                 binding.btnScanSensor2.setTextColor(android.graphics.Color.parseColor("#14FFEC"))
             }
             else -> {
-                binding.btnScanSensor2.text = "📡 SCAN SENSOR 2"
+                binding.btnScanSensor2.text = "🔬 SCAN IMU SENSOR (optional)"
                 binding.btnScanSensor2.setTextColor(android.graphics.Color.parseColor("#88AABBCC"))
             }
         }

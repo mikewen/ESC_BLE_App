@@ -56,15 +56,15 @@ class SensorFusion {
         val hasHeading:           Boolean = false,
         val hasFix:               Boolean = false,
         val satellites:           Int     = 0,
-        val headingConf:          Float   = 0f,    // 0.0 = unreliable … 1.0 = fully trusted
-        val seaState:             Float   = 0f,    // 0 = calm … 1 = rough
-        val tiltDeg:              Float   = 0f,    // Pitch/roll magnitude from accel
-        val autoDeadbandDeg:      Float   = 2f,    // deadband adjusted for sea state
-        val magCalibrated:        Boolean = false, // GPS auto-cal of MMC5603 complete
-        val magDeclinationDeg:    Float   = 0f,    // auto-computed from GPS position
+        val headingConf:          Float   = 0f,
+        val seaState:             Float   = 0f,
+        val tiltDeg:              Float   = 0f,
+        val autoDeadbandDeg:      Float   = 2f,
+        val magCalibrated:        Boolean = false,
         val rawMagHeadingDeg:     Float   = 0f,    // mag heading before declination/bias
-        val tarMisalignDeg:       Float   = 0f,    // LC02H mounting offset vs COG (degrees)
-        val tarMisalignCalibrated: Boolean = false, // mounting offset auto-detected        val magCalibrated:        Boolean = false,
+        val magDeclinationDeg:    Float   = 0f,    // auto-computed from GPS position
+        val tarMisalignDeg:       Float   = 0f,
+        val tarMisalignCalibrated: Boolean = false,
         val source:               String  = "none",
         val debugMsg:             String  = "",
     )
@@ -303,6 +303,17 @@ class SensorFusion {
     private var lastDeclinationLon: Double = Double.NaN
 
     /**
+     * Override auto-computed declination — e.g. restore from SharedPreferences on startup.
+     * Auto-computation from GPS will still update this when a fix arrives.
+     */
+    fun setDeclination(declinationDeg: Float) {
+        magDeclinationDeg = declinationDeg
+    }
+
+    /** Called when declination is recomputed from GPS — use to persist to SharedPreferences. */
+    var onDeclinationUpdated: ((Float) -> Unit)? = null
+
+    /**
      * Compute magnetic declination (degrees East positive) for a given position.
      * Uses a simplified WMM-2020 polynomial — sufficient for navigation accuracy.
      * Only recomputes when position changes by >0.5°.
@@ -318,6 +329,7 @@ class SensorFusion {
         magDeclinationDeg  = computeDeclination(latDeg, lonDeg).toFloat()
         Log.i("SensorFusion", "Declination updated: ${"%.2f".format(magDeclinationDeg)}° at " +
                 "${"%.3f".format(latDeg)}N ${"%.3f".format(lonDeg)}E")
+        onDeclinationUpdated?.invoke(magDeclinationDeg)
     }
 
     /**
@@ -613,7 +625,7 @@ class SensorFusion {
         val gnssRecent = (nowMs - lastGnssTimeMs) < 3_000L
         val gnssFactor = if (gnssRecent) (1f - state.headingConf * 0.8f) else 1f
         // Calibrated mag gets higher base weight (0.05 vs 0.02)
-        val magBase   = if (magCalibrated) 0.12f else 0.02f
+        val magBase   = if (magCalibrated) 0.05f else 0.02f
 
         //val turnRate = abs(gyroZDegS)   // reduce mag correction during rotation
         //val turnFactor = (1f - turnRate / 30f).coerceIn(0.2f, 1f)
@@ -628,7 +640,7 @@ class SensorFusion {
         //val magWeight = (magBase * tiltFactor * gnssFactor).coerceIn(0.02f, 0.35f)
         // Apply speed factor to final weight
         val magWeight = (magBase * tiltFactor * gnssFactor * speedFactor)
-            .coerceIn(0.01f, 0.35f) // Lower min bound to allow very low mag influence
+            .coerceIn(0.01f, 0.15f) // Lower min bound to allow very low mag influence
 
         val fused: Float
         val filterLabel: String
@@ -913,21 +925,25 @@ class SensorFusion {
         latDeg:    Double?,
         lonDeg:    Double?
     ) {
+        // Update declination from phone GPS position — same as processA3
+        if (hasFix && latDeg != null && lonDeg != null && latDeg != 0.0) {
+            updateDeclination(latDeg, lonDeg)
+        }
+
         val hasHdg = cogDeg != null && speedKt >= 0.3f
         val heading = if (hasHdg) {
             applyFilter(cogDeg!!, 0f, 0.15f, 0.1f)
         } else state.headingDeg
 
         state = state.copy(
-            headingDeg  = heading,
-            speedKnots  = speedKt,
-            // Only update hasHeading if phone actually has a heading.
-            // Don't overwrite hasHeading=true that was set by IMU/mag (processA1).
-            hasHeading  = if (hasHdg) true else state.hasHeading,
-            hasFix      = hasFix,
-            latDeg      = latDeg ?: state.latDeg,
-            lonDeg      = lonDeg ?: state.lonDeg,
-            source      = "nmea",
+            headingDeg        = heading,
+            speedKnots        = speedKt,
+            hasHeading        = if (hasHdg) true else state.hasHeading,
+            hasFix            = hasFix,
+            latDeg            = latDeg ?: state.latDeg,
+            lonDeg            = lonDeg ?: state.lonDeg,
+            magDeclinationDeg = magDeclinationDeg,
+            source            = "nmea",
         )
         onFusedHeading?.invoke(state)
     }

@@ -161,7 +161,7 @@ class AutopilotActivity : AppCompatActivity() {
         baseDeadbandDeg = prefs.getFloat("deadband", DEADBAND_DEFAULT)
         deadbandDeg = baseDeadbandDeg
 
-        binding.tvApDeviceName.text = deviceName
+        binding.tvApDeviceName.text = "⚡ $deviceName"
 
         setupBleManager(device)
         setupGps()
@@ -180,14 +180,15 @@ class AutopilotActivity : AppCompatActivity() {
         else @Suppress("DEPRECATION") intent.getParcelableExtra(EXTRA_REMOTE_DEVICE)
         remoteDevice?.let { connectRemote(it) }
 
-        // Sensor2 — GpsManager keeps the connection from ControlActivity.
-        // Re-attach status callback; reconnect if needed (e.g. activity transition dropped it).
+        // IMU/mag sensor2 — GpsManager keeps connection; re-attach status callback
         val sensor2Name = intent.getStringExtra(EXTRA_SENSOR2_NAME)
         if (sensor2Name != null) {
-            gpsManager.onSensor2Status = { msg -> runOnUiThread { binding.tvSensor2Status.text = msg } }
+            gpsManager.onSensor2Status = { msg -> runOnUiThread {
+                binding.tvSensor2Status.text = msg
+            }}
             if (!gpsManager.isSensor2Connected) {
-                val s2Dev: android.bluetooth.BluetoothDevice? = if (android.os.Build.VERSION.SDK_INT >= 33)
-                    intent.getParcelableExtra(EXTRA_SENSOR2_DEVICE, android.bluetooth.BluetoothDevice::class.java)
+                val s2Dev: BluetoothDevice? = if (android.os.Build.VERSION.SDK_INT >= 33)
+                    intent.getParcelableExtra(EXTRA_SENSOR2_DEVICE, BluetoothDevice::class.java)
                 else @Suppress("DEPRECATION") intent.getParcelableExtra(EXTRA_SENSOR2_DEVICE)
                 s2Dev?.let { gpsManager.connectSensor2(it, sensor2Name) }
             }

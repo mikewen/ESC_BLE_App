@@ -1,6 +1,7 @@
 package com.escbleapp
 
 import android.Manifest
+import android.bluetooth.BluetoothDevice
 import android.content.Context
 import android.content.pm.PackageManager
 import android.location.Location
@@ -9,6 +10,7 @@ import android.os.Looper
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.google.android.gms.location.*
+import no.nordicsemi.android.ble.observer.ConnectionObserver
 import java.io.File
 import java.io.FileWriter
 import java.io.PrintWriter
@@ -79,6 +81,19 @@ class GpsManager(private val context: Context) {
         // Load saved calibration offsets (mag hard-iron, gyro bias)
         val calPrefs = context.getSharedPreferences("calibration_prefs", Context.MODE_PRIVATE)
         CalibrationActivity.loadCalibration(calPrefs, fusion)
+
+        // Restore last known magnetic declination — valid until GPS provides a better fix
+        val savedDecl = calPrefs.getFloat("mag_declination_deg", Float.NaN)
+        if (!savedDecl.isNaN()) {
+            fusion.setDeclination(savedDecl)
+            Log.i("GpsManager", "Declination restored: ${"%.2f".format(savedDecl)}°")
+        }
+
+        // Persist declination whenever SensorFusion auto-updates it from GPS
+        fusion.onDeclinationUpdated = { decl ->
+            calPrefs.edit().putFloat("mag_declination_deg", decl).apply()
+            Log.i("GpsManager", "Declination saved: ${"%.2f".format(decl)}°")
+        }
     }
 
     private var currentData  = GpsData()
@@ -89,9 +104,39 @@ class GpsManager(private val context: Context) {
     var onUpdate:    ((GpsData) -> Unit)? = null
     var onNmeaDebug: ((String)  -> Unit)? = null
     var onLogStatus: ((String)  -> Unit)? = null
+    var onSensor2Status: ((String) -> Unit)? = null
 
     /** Set by AutopilotActivity on engage — receives SENS and GPS log rows. */
     var autopilotLogger: AutopilotLogger? = null
+
+    // ── Sensor2 (secondary BLE IMU Sensor) ───────────────────────────
+    // Optional AC6328/AC6329C whose ae02 feeds the same SensorFusion instance.
+    // A1/A2/A3 from either sensor processed identically — just merge the streams.
+    private var sensor2Ble: AC6328BleManager? = null
+    val isSensor2Connected: Boolean get() = sensor2Ble?.isConnected ?: false
+
+    fun connectSensor2(device: BluetoothDevice, name: String) {
+        if (sensor2Ble == null) {
+            sensor2Ble = AC6328BleManager(context)
+            sensor2Ble?.setConnectionObserver(object : ConnectionObserver {
+                override fun onDeviceConnecting(device: BluetoothDevice) { onSensor2Status?.invoke("Connecting to $name...") }
+                override fun onDeviceConnected(device: BluetoothDevice)  { onSensor2Status?.invoke("$name Connected") }
+                override fun onDeviceFailedToConnect(device: BluetoothDevice, reason: Int) { onSensor2Status?.invoke("$name Connection Failed") }
+                override fun onDeviceReady(device: BluetoothDevice)      {}
+                override fun onDeviceDisconnecting(device: BluetoothDevice) { onSensor2Status?.invoke("Disconnecting $name...") }
+                override fun onDeviceDisconnected(device: BluetoothDevice, reason: Int) { onSensor2Status?.invoke("$name Disconnected") }
+            })
+            sensor2Ble?.onAe02Raw = { bytes -> feedAe02Bytes(bytes) }
+        }
+        sensor2Ble?.connectToDevice(device)
+    }
+    fun disconnectSensor2() {
+        sensor2Ble?.disconnect()?.enqueue()
+        sensor2Ble?.close()
+        sensor2Ble = null
+        onSensor2Status?.invoke("")
+    }
+
 
     // ── Hardware configuration ────────────────────────────────────────────────
     /**
@@ -100,47 +145,6 @@ class GpsManager(private val context: Context) {
      * Effect: ax = -ax, ay = -ay before tilt compensation.
      */
     var accelRotated180: Boolean = false
-
-    // ── Second BLE sensor ─────────────────────────────────────────────────────
-    // Optional AC6329C whose ae02 feeds the same SensorFusion instance.
-    // A1/A2/A3 from either sensor processed identically — just merge the streams.
-
-    private var sensor2Ble: AC6328BleManager? = null
-    var onSensor2Status: ((String) -> Unit)? = null
-
-    fun connectSensor2(device: android.bluetooth.BluetoothDevice, name: String) {
-        sensor2Ble?.disconnect()?.enqueue()
-        sensor2Ble?.close()
-        sensor2Ble = AC6328BleManager(context)
-        sensor2Ble!!.setConnectionObserver(object : no.nordicsemi.android.ble.observer.ConnectionObserver {
-            override fun onDeviceConnecting(d: android.bluetooth.BluetoothDevice)    = Unit
-            override fun onDeviceDisconnecting(d: android.bluetooth.BluetoothDevice) = Unit
-            override fun onDeviceReady(d: android.bluetooth.BluetoothDevice)         = Unit
-            override fun onDeviceConnected(d: android.bluetooth.BluetoothDevice) {
-                Log.i(TAG, "Sensor2 connected: $name")
-                onSensor2Status?.invoke("📡 $name")
-            }
-            override fun onDeviceFailedToConnect(d: android.bluetooth.BluetoothDevice, reason: Int) {
-                Log.w(TAG, "Sensor2 failed: $reason")
-                onSensor2Status?.invoke("📡 $name failed ($reason)")
-            }
-            override fun onDeviceDisconnected(d: android.bluetooth.BluetoothDevice, reason: Int) {
-                Log.i(TAG, "Sensor2 disconnected: $reason")
-                onSensor2Status?.invoke("")
-            }
-        })
-        sensor2Ble!!.onAe02Raw = { bytes -> feedAe02Bytes(bytes) }
-        sensor2Ble!!.connectToDevice(device)
-    }
-
-    fun disconnectSensor2() {
-        sensor2Ble?.disconnect()?.enqueue()
-        sensor2Ble?.close()
-        sensor2Ble = null
-        onSensor2Status?.invoke("")
-    }
-
-    val isSensor2Connected: Boolean get() = sensor2Ble != null
 
     var tripDistanceNm: Double = 0.0
         private set

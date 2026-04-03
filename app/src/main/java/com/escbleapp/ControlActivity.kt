@@ -65,10 +65,10 @@ class ControlActivity : AppCompatActivity() {
     private var isConnected      = false
 
     companion object {
-        const val EXTRA_DEVICE        = "extra_device"
-        const val EXTRA_DEVICE_NAME   = "extra_device_name"
+        const val EXTRA_DEVICE         = "extra_device"       // primary: GNSS + motor PWM
+        const val EXTRA_DEVICE_NAME    = "extra_device_name"
         const val EXTRA_REMOTE_DEVICE  = "extra_remote_device"
-        const val EXTRA_SENSOR2_DEVICE = "extra_sensor2_device"
+        const val EXTRA_SENSOR2_DEVICE = "extra_sensor2_device"  // secondary: IMU/mag sensor
         const val EXTRA_SENSOR2_NAME   = "extra_sensor2_name"
     }
 
@@ -113,14 +113,17 @@ class ControlActivity : AppCompatActivity() {
         else @Suppress("DEPRECATION") intent.getParcelableExtra(EXTRA_REMOTE_DEVICE)
         remoteDevice?.let { connectRemote(it) }
 
-        // Connect second sensor if found in MainActivity scan
+        // Connect IMU/mag sensor (sensor2) — A1 only, no motor commands
+        // Primary device handles A2+A3 (GNSS) + motor PWM
         val sensor2Device: BluetoothDevice? = if (android.os.Build.VERSION.SDK_INT >= 33)
             intent.getParcelableExtra(EXTRA_SENSOR2_DEVICE, BluetoothDevice::class.java)
         else @Suppress("DEPRECATION") intent.getParcelableExtra(EXTRA_SENSOR2_DEVICE)
-        val sensor2Name = intent.getStringExtra(EXTRA_SENSOR2_NAME) ?: "Sensor2"
+        val sensor2Name = intent.getStringExtra(EXTRA_SENSOR2_NAME) ?: "IMU Sensor"
         sensor2Device?.let {
             gpsManager.connectSensor2(it, sensor2Name)
-            gpsManager.onSensor2Status = { msg -> runOnUiThread { binding.tvSensor2Status.text = msg } }
+            gpsManager.onSensor2Status = { msg -> runOnUiThread {
+                binding.tvSensor2Status.text = msg
+            }}
         }
     }
 
@@ -182,7 +185,7 @@ class ControlActivity : AppCompatActivity() {
             override fun onDeviceConnected(d: BluetoothDevice) = runOnUiThread {
                 isConnected = true
                 binding.tvStatus.text     = "Connected ✓"
-                binding.tvDeviceName.text = deviceName
+                binding.tvDeviceName.text = "⚡ $deviceName"
                 updateUi(true)
                 vibrate(50)
                 handler.postDelayed({
@@ -332,14 +335,15 @@ class ControlActivity : AppCompatActivity() {
                     this@ControlActivity.intent.getParcelableExtra(EXTRA_REMOTE_DEVICE, BluetoothDevice::class.java)
                 else @Suppress("DEPRECATION") this@ControlActivity.intent.getParcelableExtra(EXTRA_REMOTE_DEVICE)
                 remDev?.let { putExtra(AutopilotActivity.EXTRA_REMOTE_DEVICE, it) }
-                // Pass sensor2 — GpsManager keeps the connection, just pass extras for reconnect
-                this@ControlActivity.intent.getStringExtra(EXTRA_SENSOR2_NAME)?.let {
-                    putExtra(AutopilotActivity.EXTRA_SENSOR2_NAME, it)
-                }
+                // Pass IMU/mag sensor2 extras — GpsManager keeps connection, autopilot re-attaches
                 val s2Dev: BluetoothDevice? = if (android.os.Build.VERSION.SDK_INT >= 33)
                     this@ControlActivity.intent.getParcelableExtra(EXTRA_SENSOR2_DEVICE, BluetoothDevice::class.java)
                 else @Suppress("DEPRECATION") this@ControlActivity.intent.getParcelableExtra(EXTRA_SENSOR2_DEVICE)
-                s2Dev?.let { putExtra(AutopilotActivity.EXTRA_SENSOR2_DEVICE, it) }
+                s2Dev?.let {
+                    putExtra(AutopilotActivity.EXTRA_SENSOR2_DEVICE, it)
+                    putExtra(AutopilotActivity.EXTRA_SENSOR2_NAME,
+                        this@ControlActivity.intent.getStringExtra(EXTRA_SENSOR2_NAME) ?: "IMU Sensor")
+                }
             }
             startActivity(intent)
         }
