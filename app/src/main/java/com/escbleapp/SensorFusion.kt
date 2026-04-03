@@ -119,11 +119,14 @@ class SensorFusion {
         val n = if (seaWinFull) SEA_STATE_WINDOW else seaWinIdx
         if (n < 10) return state.seaState
 
-        // Stddev of each channel
+        // Stddev of each channel — direct loops, no allocations (called at 50Hz)
         fun stddev(arr: FloatArray): Float {
-            val mean = arr.take(n).sum() / n
-            val v = arr.take(n).sumOf { ((it - mean) * (it - mean)).toDouble() }.toFloat() / n
-            return sqrt(v)
+            var sum = 0f
+            for (i in 0 until n) sum += arr[i]
+            val mean = sum / n
+            var variance = 0f
+            for (i in 0 until n) { val d = arr[i] - mean; variance += d * d }
+            return sqrt(variance / n)
         }
         val azStd  = stddev(azWindow)
         val gxyStd = stddev(gxyWindow)
@@ -275,13 +278,15 @@ class SensorFusion {
         if (misalignIdx == 0) misalignFull = true
 
         val n = if (misalignFull) TAR_MISALIGN_WINDOW else misalignIdx
-        if (n < TAR_MISALIGN_WINDOW) return   // not enough samples yet
+        if (n < TAR_MISALIGN_WINDOW) return
 
-        val mean     = misalignWindow.take(n).sum() / n
-        val variance = misalignWindow.take(n).sumOf { ((it - mean) * (it - mean)).toDouble() }.toFloat() / n
-        val stddev   = sqrt(variance)
+        var sum = 0f
+        for (i in 0 until n) sum += misalignWindow[i]
+        val mean = sum / n
+        var variance = 0f
+        for (i in 0 until n) { val d = misalignWindow[i] - mean; variance += d * d }
+        val stddev = sqrt(variance / n)
 
-        // Accept only if stable AND small — large = wrong physical orientation
         if (stddev < TAR_MISALIGN_STABLE && abs(mean) < TAR_MISALIGN_MAX) {
             tarMisalignEstimate   = mean
             tarMisalignCalibrated = true
@@ -405,9 +410,8 @@ class SensorFusion {
         var diff = sensorHeading - gyroHeading
         while (diff >  180f) diff -= 360f
         while (diff < -180f) diff += 360f
-        val maxStep    = maxHeadingRateDegS * dtS
-        val damping = 0.3f * gyroZDegS  // add derivative damping
-        val correction = (diff - damping).coerceIn(-maxStep, maxStep)
+        val maxStep  = maxHeadingRateDegS * dtS
+        val correction = diff.coerceIn(-maxStep, maxStep)
         filteredHeading = ((gyroHeading + sensorWeight * correction) + 360f) % 360f
         return filteredHeading
     }
@@ -625,7 +629,7 @@ class SensorFusion {
         val gnssRecent = (nowMs - lastGnssTimeMs) < 3_000L
         val gnssFactor = if (gnssRecent) (1f - state.headingConf * 0.8f) else 1f
         // Calibrated mag gets higher base weight (0.05 vs 0.02)
-        val magBase   = if (magCalibrated) 0.05f else 0.02f
+        val magBase   = if (magCalibrated) 0.12f else 0.02f
 
         //val turnRate = abs(gyroZDegS)   // reduce mag correction during rotation
         //val turnFactor = (1f - turnRate / 30f).coerceIn(0.2f, 1f)
@@ -640,7 +644,7 @@ class SensorFusion {
         //val magWeight = (magBase * tiltFactor * gnssFactor).coerceIn(0.02f, 0.35f)
         // Apply speed factor to final weight
         val magWeight = (magBase * tiltFactor * gnssFactor * speedFactor)
-            .coerceIn(0.01f, 0.15f) // Lower min bound to allow very low mag influence
+            .coerceIn(0.01f, 0.35f) // Lower min bound to allow very low mag influence
 
         val fused: Float
         val filterLabel: String
@@ -698,7 +702,8 @@ class SensorFusion {
     // Cache latest RMC values from A3 packet for blending with A2
     var cachedRmcHeading = 0f
     var cachedRmcSpeed   = 0f
-    private var cachedRmcValid   = false
+    private var cachedRmcValid       = false
+    private var lastRawTarHeadingDeg = 0f   // raw PQTMTAR before misalignment correction
 
     /**
      * Process PQTMTAR packet (0xA2).
@@ -723,25 +728,23 @@ class SensorFusion {
     ) {
         val speedKt = cachedRmcSpeed
 
+        // Cache raw PQTMTAR before any correction — used by updateTarMisalignment (#2)
+        lastRawTarHeadingDeg = tarHeadingDeg
+
         // Apply LC02H mounting misalignment correction if calibrated
-        // e.g. antenna mounted 3° left → tarMisalignEstimate = +3° → correct right
         val correctedTarHdg = if (tarMisalignCalibrated)
             ((tarHeadingDeg + tarMisalignEstimate) + 360f) % 360f
         else tarHeadingDeg
 
         // ── PQTMTAR weight ────────────────────────────────────────────────────
         val qualFactor = when (gnssQuality) { 4 -> 1.0f; 6 -> 0.5f; else -> 0.0f }
-        // Accuracy: 0°=1.0, 20°=0.0  (tarAccDeg is float, e.g. 0.5°)
         val accFactor  = (1f - tarAccDeg / 20f).coerceIn(0f, 1f)
-        // Satellites: <4=0, ≥8=1.0
         val satFactor  = ((satellites - 4f) / 4f).coerceIn(0f, 1f)
-        // Speed: PQTMTAR drifts when nearly stationary — retain 40% weight below 0.3kt
         val tarSpeedFactor = ((speedKt - 0.3f) / 0.2f).coerceIn(0.4f, 1f)
 
         var wTar = qualFactor * accFactor * satFactor * tarSpeedFactor
 
         // ── RMC COG weight (from cached A3) ─────────────────────────────────
-        // Zero below 0.5kt, full above 2kt, linear ramp between
         var wRmc = if (cachedRmcValid) ((speedKt - 0.5f) / 1.5f).coerceIn(0f, 1f) else 0f
 
         val totalW = wTar + wRmc
@@ -769,27 +772,23 @@ class SensorFusion {
         val fused: Float
         val filterLabel: String
         if (useKalman) {
-            // ── Kalman GNSS update ────────────────────────────────────────────
-            // R_gps = tarAccDeg² / qualFactor — uses PQTMTAR accuracy field directly
-            // Clamp tarAccDeg to avoid R=∞ when accuracy=0
             val accDegClamped = tarAccDeg.coerceIn(0.1f, 30f)
             val rGps = (accDegClamped * accDegClamped) / qualFactor.coerceAtLeast(0.1f)
-            // Down-weight during fast turns (GNSS heading lags real heading)
             val turnPenalty = (1f + turnRate / 10f)
             kalman.update(blended, rGps * turnPenalty)
             fused = kalman.theta
             filterLabel = "KF R=${"%.1f".format(rGps)} turn=${"%.1f".format(turnRate)}"
         } else {
-            // ── Complementary GNSS correction ────────────────────────────────
+            // #4: use lastGyroZDegS so CF predicts where heading is now between 1Hz updates
             val turnFactor = (1f - turnRate / 20f).coerceIn(0.2f, 1f)
             val dynamicW = filterW * turnFactor
-            fused = applyFilter(blended, 0f, dynamicW, 0.1f)
+            fused = applyFilter(blended, lastGyroZDegS, dynamicW, 0.1f)
             filterLabel = "CF w=${"%.3f".format(filterW)} tf=${"%.2f".format(turnFactor)}"
         }
 
         updateMagCalibration(
             gpsHeading    = blended,
-            rawMagHeading = state.headingDeg,
+            rawMagHeading = state.rawMagHeadingDeg,   // #1: raw mag, not fused heading
             speedKt       = speedKt,
             seaState      = state.seaState,
             gpsConf       = conf
@@ -841,9 +840,10 @@ class SensorFusion {
             updateDeclination(latDeg, lonDeg)
         }
 
-        // Auto-calibrate LC02H mounting misalignment vs COG at high speed + calm sea
+        // #2: use raw PQTMTAR heading (cached before misalignment correction in processA2)
+        //     COG vs raw TAR gives the true physical mounting offset
         if (speedKt >= TAR_MISALIGN_SPEED_KT) {
-            updateTarMisalignment(cogDeg, state.headingDeg, speedKt, state.seaState)
+            updateTarMisalignment(cogDeg, lastRawTarHeadingDeg, speedKt, state.seaState)
         }
 
         state = state.copy(
