@@ -649,36 +649,47 @@ class SensorFusion {
         val fused: Float
         val filterLabel: String
         if (useKalman) {
-            // ── Kalman path ───────────────────────────────────────────────────
             if (!kalman.initialised) kalman.init(magHeading)
-            // Predict: propagate with gyro
             kalman.predict(gyroZDegS, dtS)
-            // R_mag: higher when tilted (mag unreliable) or rough sea
             val rMag = kalman.sigmaMag * kalman.sigmaMag *
                     (1f + (1f - tiltFactor) * 2f) *
                     (1f + seaState)
             kalman.update(magHeading, rMag)
-            // NOTE: do NOT feed kalman.bias back into gyroBiasZ — the estimated
-            // bias includes any turn-rate residual during fast rotation and will
-            // corrupt the dock calibration. The Kalman bias is internal only.
             fused = kalman.theta
             filterLabel = "KF mag R=${"%.1f".format(rMag)} b=${"%.3f".format(kalman.bias)}"
         } else {
-            // ── Complementary path ────────────────────────────────────────────
             fused = applyFilter(magHeading, gyroZDegS, magWeight, dtS)
             filterLabel = "CF w=${"%.4f".format(magWeight)}"
         }
 
+        // ── Heading confidence — mag-only source ─────────────────────────────
+        // When GNSS is recent, keep A2-set confidence (it already includes all penalties).
+        // When mag-only, compute confidence from mag reliability factors.
+        val magConf: Float = if (gnssRecent) {
+            state.headingConf   // A2 already set a well-penalised conf — don't overwrite
+        } else {
+            // Base: calibrated mag is more reliable
+            val magBase = if (magCalibrated) 0.6f else 0.3f
+            // Turn penalty: mag heading lags gyro during fast rotation
+            val turnPenaltyMag = (1f - abs(gyroZDegS) / 40f).coerceIn(0.2f, 1f)
+            // Sea state penalty: wave yaw oscillation
+            val seaPenaltyMag  = (1f - seaState * 0.6f).coerceIn(0.4f, 1f)
+            // Tilt penalty: tilted mag is unreliable
+            val tiltPenaltyMag = tiltFactor.coerceIn(0.3f, 1f)
+            (magBase * turnPenaltyMag * seaPenaltyMag * tiltPenaltyMag).coerceIn(0f, 1f)
+        }
+
         state = state.copy(
-            headingDeg      = fused,
-            hasHeading      = true,
-            seaState        = seaState,
-            tiltDeg         = tiltDeg,
-            autoDeadbandDeg = autoDeadband,
-            magCalibrated   = magCalibrated,
+            headingDeg       = fused,
+            hasHeading       = true,
+            headingConf      = magConf,
+            seaState         = seaState,
+            tiltDeg          = tiltDeg,
+            autoDeadbandDeg  = autoDeadband,
+            magCalibrated    = magCalibrated,
             rawMagHeadingDeg = rawMagHeading,
-            source          = if (useKalman) "kf:imu+mag" else "cf:imu+mag",
-            debugMsg        = "A1: gz=${"%.2f".format(gyroZDegS)} mag=${"%.1f".format(magHeading)} tilt=${"%.1f".format(tiltDeg)} sea=${"%.2f".format(seaState)} db=${"%.1f".format(autoDeadband)}° $filterLabel → ${"%.1f".format(fused)}"
+            source           = if (useKalman) "kf:imu+mag" else "cf:imu+mag",
+            debugMsg         = "A1: gz=${"%.2f".format(gyroZDegS)} mag=${"%.1f".format(magHeading)} tilt=${"%.1f".format(tiltDeg)} sea=${"%.2f".format(seaState)} db=${"%.1f".format(autoDeadband)}° conf=${"%.2f".format(magConf)} $filterLabel → ${"%.1f".format(fused)}"
         )
         onFusedHeading?.invoke(state)
     }
@@ -762,12 +773,28 @@ class SensorFusion {
         while (diff < -180f) diff += 360f
         val blended = ((correctedTarHdg + wRmc * diff) + 360f) % 360f
 
-        val conf = (qualFactor * accFactor * satFactor * 0.8f +
+        // ── Heading confidence — signal quality × dynamic penalties ──────────
+        // rawConf: GNSS signal quality (0–1)
+        val rawConf = (qualFactor * accFactor * satFactor * 0.8f +
                 wRmc * (speedKt / 2f).coerceIn(0f, 1f) * 0.2f).coerceIn(0f, 1f)
+
+        // Turn penalty: GNSS heading lags during fast rotation.
+        // 0°/s = 1.0, 20°/s = 0.5, 40°/s = 0.2 (min)
+        val turnPenalty = (1f - abs(lastGyroZDegS) / 40f).coerceIn(0.2f, 1f)
+
+        // Sea state penalty: wave-induced yaw oscillation degrades instantaneous accuracy.
+        // calm=1.0, rough=0.4 (min)
+        val seaPenaltyGnss = (1f - state.seaState * 0.6f).coerceIn(0.4f, 1f)
+
+        // Tilt penalty: large tilt degrades mag heading used in blend.
+        // 0°=1.0, 30°=0.5
+        val tiltPenalty = (1f - state.tiltDeg / 60f).coerceIn(0.5f, 1f)
+
+        val conf = (rawConf * turnPenalty * seaPenaltyGnss * tiltPenalty).coerceIn(0f, 1f)
         val filterW = (0.05f + conf * 0.15f).coerceIn(0.05f, 0.20f)
 
         lastGnssTimeMs = nowMs
-        val turnRate = abs(lastGyroZDegS)
+        val turnRate = abs(lastGyroZDegS)   // used by Kalman penalty and CF turnFactor
 
         val fused: Float
         val filterLabel: String
@@ -805,7 +832,7 @@ class SensorFusion {
             tarMisalignDeg        = tarMisalignEstimate,
             tarMisalignCalibrated = tarMisalignCalibrated,
             source                = if (useKalman) "kf:gnss+imu" else "cf:gnss+imu",
-            debugMsg              = "A2: tar=${"%.1f".format(tarHeadingDeg)}${if (tarMisalignCalibrated) "(+${"%.1f".format(tarMisalignEstimate)}°)" else ""}(w=${"%.2f".format(wTar)}) rmc=${"%.1f".format(cachedRmcHeading)}(w=${"%.2f".format(wRmc)}) → ${"%.1f".format(fused)} conf=${"%.2f".format(conf)} $filterLabel"
+            debugMsg              = "A2: tar=${"%.1f".format(tarHeadingDeg)}${if (tarMisalignCalibrated) "(+${"%.1f".format(tarMisalignEstimate)}°)" else ""}(w=${"%.2f".format(wTar)}) rmc=${"%.1f".format(cachedRmcHeading)}(w=${"%.2f".format(wRmc)}) → ${"%.1f".format(fused)} conf=${"%.2f".format(conf)}(raw=${"%.2f".format(rawConf)} turn=${"%.2f".format(turnPenalty)} sea=${"%.2f".format(seaPenaltyGnss)} tilt=${"%.2f".format(tiltPenalty)}) $filterLabel"
         )
         onFusedHeading?.invoke(state)
     }
