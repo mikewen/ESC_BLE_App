@@ -61,6 +61,20 @@
             android:textSize="13sp"
             android:fontFamily="monospace"/>
 
+        <!-- Set as IMU sensor — shown only after motor device is selected -->
+        <Button
+            android:id="@+id/btnSetImu"
+            android:layout_width="wrap_content"
+            android:layout_height="32dp"
+            android:text="🔬 IMU"
+            android:textSize="11sp"
+            android:paddingHorizontal="8dp"
+            android:backgroundTint="#1A2F1A"
+            android:textColor="#88FFB300"
+            android:visibility="gone"
+            android:layout_marginStart="6dp"
+            style="@style/Widget.MaterialComponents.Button"/>
+
         <!-- Arrow -->
         <TextView
             android:layout_width="wrap_content"

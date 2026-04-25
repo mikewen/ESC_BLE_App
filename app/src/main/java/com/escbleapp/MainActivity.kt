@@ -54,15 +54,18 @@ class MainActivity : AppCompatActivity() {
 
     // Remote device — found via separate scan, passed to ControlActivity/AutopilotActivity
     private var remoteDevice: BluetoothDevice? = null
-    private var remoteScanCallback: android.bluetooth.le.ScanCallback? = null
-    private var isRemoteScanning = false
-    private val REMOTE_SCAN_PERIOD_MS = 10_000L
 
     // Second sensor device — sensor-only AC6329C (no motor control needed)
     // Its ae02 merges with the motor device's ae02 in GpsManager → same SensorFusion
-    private var sensor2Device: BluetoothDevice? = null
+    private var sensor2Device: BluetoothDevice? = null  // IMU/mag sensor (A1 only)
     private var sensor2ScanCallback: android.bluetooth.le.ScanCallback? = null
     private var isSensor2Scanning = false
+
+    private fun showToast(msg: String) =
+        android.widget.Toast.makeText(this, msg, android.widget.Toast.LENGTH_SHORT).show()
+    private var remoteScanCallback: android.bluetooth.le.ScanCallback? = null
+    private var isRemoteScanning = false
+    private val REMOTE_SCAN_PERIOD_MS = 10_000L
 
     // Permission launcher
     private val permissionLauncher = registerForActivityResult(
@@ -82,19 +85,39 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        adapter = DeviceAdapter(devices) { item ->
-            stopScan()
-            val intent = Intent(this, ControlActivity::class.java).apply {
-                putExtra(ControlActivity.EXTRA_DEVICE, item.device)
-                putExtra(ControlActivity.EXTRA_DEVICE_NAME, item.name)
-                remoteDevice?.let { putExtra(ControlActivity.EXTRA_REMOTE_DEVICE, it) }
-                sensor2Device?.let {
-                    putExtra(ControlActivity.EXTRA_SENSOR2_DEVICE, it)
-                    putExtra(ControlActivity.EXTRA_SENSOR2_NAME, it.name ?: "IMU Sensor")
+        adapter = DeviceAdapter(
+            items    = devices,
+            onClick  = { item ->
+                stopScan()
+                // Tapping a device = select as motor controller.
+                // Show [🔬 IMU] button on all other rows in the list.
+                adapter.motorAddress = item.address
+                adapter.imuAddress   = sensor2Device?.address
+                adapter.notifyDataSetChanged()
+                val intent = Intent(this, ControlActivity::class.java).apply {
+                    putExtra(ControlActivity.EXTRA_DEVICE, item.device)
+                    putExtra(ControlActivity.EXTRA_DEVICE_NAME, item.name)
+                    remoteDevice?.let { putExtra(ControlActivity.EXTRA_REMOTE_DEVICE, it) }
+                    sensor2Device?.let {
+                        putExtra(ControlActivity.EXTRA_SENSOR2_DEVICE, it)
+                        putExtra(ControlActivity.EXTRA_SENSOR2_NAME, it.name ?: "IMU Sensor")
+                    }
                 }
+                startActivity(intent)
+            },
+            onSetImu = { item ->
+                // Tap [🔬 IMU] to assign as IMU sensor; tap again to deselect
+                if (sensor2Device?.address == item.address) {
+                    sensor2Device = null
+                    showToast("IMU sensor cleared")
+                } else {
+                    sensor2Device = item.device
+                    showToast("🔬 IMU sensor: ${item.name}")
+                }
+                adapter.imuAddress = sensor2Device?.address
+                adapter.notifyDataSetChanged()
             }
-            startActivity(intent)
-        }
+        )
 
         binding.recyclerView.layoutManager = LinearLayoutManager(this)
         binding.recyclerView.adapter = adapter
@@ -199,7 +222,8 @@ class MainActivity : AppCompatActivity() {
             override fun onScanResult(callbackType: Int, result: android.bluetooth.le.ScanResult) {
                 val name = result.device.name ?: return
                 // Same name filter as motor device scan — any AC6329C/GPS/IMU device
-                val sensorNames = listOf("AC6329", "GPS_PWM", "IMU_PWM", "ESC_PWM", "BLDC_PWM")
+                //val sensorNames = listOf("AC6329", "GPS_PWM", "IMU_PWM", "ESC_PWM", "BLDC_PWM")
+                val sensorNames = listOf("AC6328_IMU", "AC6329_IMU", "IMU_PWM")
                 val match = sensorNames.any { name.contains(it, true) }
                 // Don't pick up the same device twice (already in the motor device list)
                 if (match && devices.none { it.address == result.device.address }) {
@@ -247,7 +271,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
     }
-
     private fun checkPermissionsAndScan() {
         val required = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             arrayOf(
@@ -371,7 +394,10 @@ class MainActivity : AppCompatActivity() {
 
 class DeviceAdapter(
     private val items: List<BleDeviceItem>,
-    private val onClick: (BleDeviceItem) -> Unit
+    private val onClick: (BleDeviceItem) -> Unit,
+    private val onSetImu: ((BleDeviceItem) -> Unit)? = null,
+    var motorAddress: String? = null,    // address of already-selected motor device
+    var imuAddress:   String? = null     // address of already-selected IMU device
 ) : RecyclerView.Adapter<DeviceAdapter.VH>() {
 
     inner class VH(val binding: ItemDeviceBinding) : RecyclerView.ViewHolder(binding.root)
@@ -388,7 +414,25 @@ class DeviceAdapter(
         holder.binding.tvAddress.text = item.address
         holder.binding.tvRssi.text = "${item.rssi} dBm"
         holder.binding.ivSignal.setImageLevel(rssiToLevel(item.rssi))
-        holder.itemView.setOnClickListener { onClick(item) }
+
+        // Show [🔬 IMU] button on non-motor devices once a motor device is selected
+        val isMotor = item.address == motorAddress
+        val isImu   = item.address == imuAddress
+        val showImu = motorAddress != null && !isMotor && onSetImu != null
+        holder.binding.btnSetImu.visibility = if (showImu) View.VISIBLE else View.GONE
+        if (isImu) {
+            // Already selected as IMU — highlight button
+            holder.binding.btnSetImu.text = "🔬 IMU ✓"
+            holder.binding.btnSetImu.setTextColor(android.graphics.Color.parseColor("#FFB300"))
+        } else {
+            holder.binding.btnSetImu.text = "🔬 IMU"
+            holder.binding.btnSetImu.setTextColor(android.graphics.Color.parseColor("#88FFB300"))
+        }
+        holder.binding.btnSetImu.setOnClickListener { onSetImu?.invoke(item) }
+
+        // Dim the row if it's already the IMU device (can't also be motor)
+        holder.itemView.alpha = if (isImu) 0.6f else 1.0f
+        holder.itemView.setOnClickListener { if (!isImu) onClick(item) }
     }
 
     override fun getItemCount() = items.size

@@ -161,7 +161,7 @@ class AutopilotActivity : AppCompatActivity() {
         baseDeadbandDeg = prefs.getFloat("deadband", DEADBAND_DEFAULT)
         deadbandDeg = baseDeadbandDeg
 
-        binding.tvApDeviceName.text = "⚡ $deviceName"
+        binding.tvApDeviceName.text = deviceName
 
         setupBleManager(device)
         setupGps()
@@ -357,7 +357,14 @@ class AutopilotActivity : AppCompatActivity() {
      *   When GPS heading is noisy (low speed or high sAcc), correction is reduced.
      */
     private fun runControlStep() {
-        if (!hasHeading || !isConnected) return
+        if (!isConnected) return
+        // When engaged, run even without confirmed heading — use whatever is available.
+        // headingConfidence will be low (≤0.3) so PI output is naturally dampened.
+        if (!hasHeading && actualHeading == 0f) {
+            // No heading at all yet — nothing to do
+            showToast("⚠ Waiting for heading…")
+            return
+        }
 
         val dt    = CONTROL_INTERVAL_MS / 1000f
         val error = headingError(targetHeading, actualHeading)
