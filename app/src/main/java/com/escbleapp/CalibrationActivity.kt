@@ -385,7 +385,79 @@ class CalibrationActivity : AppCompatActivity() {
         }
 
         binding.btnMagCalFinish.isEnabled = false
-        //binding.rvDevices.visibility = View.GONE
+
+        // ── Baseline calibration UI ───────────────────────────────────────────
+        updateBaselineDisplay()
+
+        binding.etMeasuredBaseline.setOnFocusChangeListener { _, hasFocus ->
+            if (!hasFocus) {
+                val v = binding.etMeasuredBaseline.text.toString().toFloatOrNull()
+                if (v != null && v > 0.1f && v < 10f) {
+                    fusion?.measuredBaselineM = v
+                    prefs.edit().putFloat("lc02h_measured_baseline", v).apply()
+                    updateBaselineDisplay()
+                }
+            }
+        }
+
+        binding.btnBaselineCalStart.setOnClickListener {
+            val f = fusion
+            if (f == null) {
+                binding.tvBaselineCalStatus.text = "⚠ Connect sensor first"
+                return@setOnClickListener
+            }
+            f.startBaselineCalibration()
+            binding.tvBaselineCalStatus.text = "Keep boat still… 0%"
+            binding.btnBaselineCalStart.isEnabled = false
+            val h = android.os.Handler(android.os.Looper.getMainLooper())
+            val poll = object : Runnable {
+                override fun run() {
+                    if (f.baselineSolved) {
+                        updateBaselineDisplay()
+                        binding.btnBaselineCalStart.isEnabled = true
+                        return
+                    }
+                    val prog = f.baselineProgress
+                    if (prog < 0) {
+                        binding.tvBaselineCalStatus.text = "Cancelled"
+                        binding.btnBaselineCalStart.isEnabled = true
+                        return
+                    }
+                    binding.tvBaselineCalStatus.text = "Keep boat still… $prog%"
+                    h.postDelayed(this, 1000)
+                }
+            }
+            h.postDelayed(poll, 1000)
+        }
+
+        binding.btnBaselineCalClear.setOnClickListener {
+            prefs.edit()
+                .remove("lc02h_calibrated_baseline")
+                .putBoolean("lc02h_baseline_solved", false)
+                .apply()
+            fusion?.calibratedBaselineM = 0f
+            fusion?.baselineSolved      = false
+            updateBaselineDisplay()
+        }
+    }
+
+    private fun updateBaselineDisplay() {
+        val f = fusion
+        val measured    = f?.measuredBaselineM    ?: prefs.getFloat("lc02h_measured_baseline", 1.0f)
+        val calibrated  = f?.calibratedBaselineM  ?: 0f
+        val solved      = f?.baselineSolved        ?: false
+
+        // Show user's measured baseline in edit field
+        if (binding.etMeasuredBaseline.text.toString().toFloatOrNull() != measured)
+            binding.etMeasuredBaseline.setText("%.3f".format(measured))
+
+        binding.tvBaselineCalSaved.text = if (solved)
+            "Calibrated: ${"%.4f".format(calibrated)}m  (measured: ${"%.3f".format(measured)}m)\n" +
+                    "→ Update LC02H config to: ${"%.3f".format(calibrated)}m"
+        else
+            "Not calibrated — using measured: ${"%.3f".format(measured)}m"
+
+        binding.tvBaselineCalStatus.text = if (solved) "✓ Calibration complete" else "Tap START to calibrate"
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

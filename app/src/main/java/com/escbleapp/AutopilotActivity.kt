@@ -183,9 +183,9 @@ class AutopilotActivity : AppCompatActivity() {
         // IMU/mag sensor2 — GpsManager keeps connection; re-attach status callback
         val sensor2Name = intent.getStringExtra(EXTRA_SENSOR2_NAME)
         if (sensor2Name != null) {
-            gpsManager.onSensor2Status = { msg -> runOnUiThread {
-                binding.tvSensor2Status.text = msg
-            }}
+            gpsManager.onSensor2Status = { msg: String ->
+                runOnUiThread { binding.tvSensor2Status.text = msg }
+            }
             if (!gpsManager.isSensor2Connected) {
                 val s2Dev: BluetoothDevice? = if (android.os.Build.VERSION.SDK_INT >= 33)
                     intent.getParcelableExtra(EXTRA_SENSOR2_DEVICE, BluetoothDevice::class.java)

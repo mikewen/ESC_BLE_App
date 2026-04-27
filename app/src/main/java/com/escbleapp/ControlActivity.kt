@@ -121,9 +121,9 @@ class ControlActivity : AppCompatActivity() {
         val sensor2Name = intent.getStringExtra(EXTRA_SENSOR2_NAME) ?: "IMU Sensor"
         sensor2Device?.let {
             gpsManager.connectSensor2(it, sensor2Name)
-            gpsManager.onSensor2Status = { msg -> runOnUiThread {
-                binding.tvSensor2Status.text = msg
-            }}
+            gpsManager.onSensor2Status = { msg: String ->
+                runOnUiThread { binding.tvSensor2Status.text = msg }
+            }
         }
     }
 

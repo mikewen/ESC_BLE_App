@@ -59,10 +59,14 @@ class SensorFusion {
         val headingConf:          Float   = 0f,
         val seaState:             Float   = 0f,
         val tiltDeg:              Float   = 0f,
+        val pitchDeg:             Float   = 0f,    // LC02H PQTMTAR pitch
+        val rollDeg:              Float   = 0f,    // LC02H PQTMTAR roll
+        val solvedBaselineM:      Float   = 0f,    // LC02H solved baseline (metres)
         val autoDeadbandDeg:      Float   = 2f,
         val magCalibrated:        Boolean = false,
         val rawMagHeadingDeg:     Float   = 0f,    // mag heading before declination/bias
         val magDeclinationDeg:    Float   = 0f,    // auto-computed from GPS position
+        val magSpikeRejected:     Boolean = false, // true when last A1 mag reading was rejected
         val tarMisalignDeg:       Float   = 0f,
         val tarMisalignCalibrated: Boolean = false,
         val source:               String  = "none",
@@ -386,6 +390,86 @@ class SensorFusion {
     private var lastImuTimeMs     = 0L
     private var lastGnssTimeMs    = 0L
 
+    // ── Mag spike rejection ───────────────────────────────────────────────────
+    private var prevMagHeading    = Float.NaN   // last accepted mag heading
+    private var magSpikeCount     = 0           // consecutive spikes (for logging)
+
+    /** Max ratio of mag change to gyro-predicted change before spike rejection.
+     *  2.5 = accept up to 2.5× what the gyro predicts; lower = stricter. */
+    var magSpikeMultiplier: Float = 2.5f
+
+    // ── LC02H baseline system ─────────────────────────────────────────────────
+    //
+    //  measuredBaselineM   — user-set physical antenna separation (default 1.0m)
+    //  calibratedBaselineM — averaged from static A2 solved-baseline samples
+    //  baselineSolved      — true once calibratedBaselineM has been computed
+    //
+    //  Gate reference = calibratedBaselineM if baselineSolved, else measuredBaselineM
+    //  Gate rule: |solvedBaseline - reference| > baselineToleranceM → discard heading
+
+    /** User-set antenna separation in metres. Default 1.0m. Persisted. */
+    var measuredBaselineM:   Float   = 1.0f
+    /** Calibrated effective baseline (averaged static A2 solved-baseline). Persisted. */
+    var calibratedBaselineM: Float   = 0f
+    /** True once calibratedBaselineM has been computed. */
+    var baselineSolved:      Boolean = false
+    /** Tolerance band around reference. Default ±0.15m. */
+    var baselineToleranceM:  Float   = 0.15f
+    /** Called when calibration completes — persist calibratedBaselineM. */
+    var onBaselineSolved: ((calibrated: Float) -> Unit)? = null
+
+    /** Reference used for gating: calibrated if solved, else measured. */
+    val referenceBaselineM: Float get() =
+        if (baselineSolved) calibratedBaselineM else measuredBaselineM
+
+    /** Max tilt (pitch/roll baseline-corrected) before PQTMTAR heading zeroed. */
+    var maxTiltForGnssDeg: Float = 25f
+
+    // Pitch/roll mounting offset (separate from antenna baseline)
+    var pitchBaselineDeg: Float = 0f
+    var rollBaselineDeg:  Float = 0f
+
+    // ── Baseline calibration accumulator ─────────────────────────────────────
+    private val BASELINE_WINDOW     = 60       // A2 samples at 1Hz = 60s
+    private val BASELINE_STABLE_STD = 0.02f    // metres — max stddev
+    private val BASELINE_GYRO_GATE  = 0.5f     // °/s — reject if moving
+    private val baselineBuf         = FloatArray(BASELINE_WINDOW)
+    private var baselineIdx         = 0
+    private var baselineRunning     = false
+
+    fun startBaselineCalibration() {
+        baselineIdx = 0; baselineRunning = true
+        Log.i("SensorFusion", "Baseline cal started (measured=${measuredBaselineM}m)")
+    }
+    fun cancelBaselineCalibration() { baselineRunning = false }
+    val baselineProgress: Int get() =
+        if (!baselineRunning) -1
+        else baselineIdx.coerceAtMost(BASELINE_WINDOW) * 100 / BASELINE_WINDOW
+
+    private fun feedBaselineSample(solvedM: Float) {
+        if (!baselineRunning || solvedM <= 0f) return
+        if (abs(lastGyroZDegS) > BASELINE_GYRO_GATE) return
+        baselineBuf[baselineIdx % BASELINE_WINDOW] = solvedM
+        baselineIdx++
+        val n = baselineIdx.coerceAtMost(BASELINE_WINDOW)
+        if (n < BASELINE_WINDOW) return
+
+        var sum = 0f; for (i in 0 until n) sum += baselineBuf[i]
+        val mean = sum / n
+        var variance = 0f
+        for (i in 0 until n) { val d = baselineBuf[i] - mean; variance += d * d }
+        val std = sqrt(variance / n)
+        if (std > BASELINE_STABLE_STD) {
+            Log.d("SensorFusion", "Baseline unstable std=${"%.4f".format(std)}m — waiting")
+            return
+        }
+        calibratedBaselineM = mean
+        baselineSolved      = true
+        baselineRunning     = false
+        Log.i("SensorFusion", "Baseline calibrated: ${"%.4f".format(mean)}m std=${"%.4f".format(std)}m")
+        onBaselineSolved?.invoke(mean)
+    }
+
     /**
      * Apply complementary filter for one step.
      *
@@ -614,9 +698,37 @@ class SensorFusion {
             ((rawMagHeading + magBiasEstimate) + 360f) % 360f
         else rawMagHeading
 
-        // Apply magnetic declination (auto-computed from GPS position)
-        // Converts magnetic north to true north: true = magnetic + declination
-        val magHeading = ((magHeadingAfterBias + magDeclinationDeg) + 360f) % 360f
+        // Apply magnetic declination → true north
+        val magHeadingRaw = ((magHeadingAfterBias + magDeclinationDeg) + 360f) % 360f
+
+        // ── Mag spike rejection ───────────────────────────────────────────────
+        // A genuine heading change can't exceed |gyroZ × dt × spikeMultiplier|.
+        // If it does, the magnetometer jumped — reject and reuse previous accepted value.
+        val magSpikeRejected: Boolean
+        val magHeading: Float
+        if (prevMagHeading.isNaN()) {
+            // First reading — accept unconditionally to seed the filter
+            prevMagHeading   = magHeadingRaw
+            magHeading       = magHeadingRaw
+            magSpikeRejected = false
+        } else {
+            var delta = magHeadingRaw - prevMagHeading
+            while (delta >  180f) delta -= 360f
+            while (delta < -180f) delta += 360f
+            val maxAllowedDelta = abs(gyroZDegS) * dtS * magSpikeMultiplier + 2f  // +2° floor for noise
+            if (abs(delta) > maxAllowedDelta && abs(delta) > 5f) {
+                // Spike — reject this reading
+                magSpikeCount++
+                magHeading       = prevMagHeading   // hold last good value
+                magSpikeRejected = true
+                Log.d("SensorFusion", "Mag spike rejected: delta=${"%.1f".format(delta)}° max=${"%.1f".format(maxAllowedDelta)}° (count=$magSpikeCount)")
+            } else {
+                prevMagHeading   = magHeadingRaw
+                magHeading       = magHeadingRaw
+                magSpikeRejected = false
+                magSpikeCount    = 0
+            }
+        }
 
         // ── Tilt quality factor ───────────────────────────────────────────────
         val accelNorm  = sqrt((axEff * axEff + ayEff * ayEff + az * az).toFloat())
@@ -688,8 +800,9 @@ class SensorFusion {
             autoDeadbandDeg  = autoDeadband,
             magCalibrated    = magCalibrated,
             rawMagHeadingDeg = rawMagHeading,
+            magSpikeRejected = magSpikeRejected,
             source           = if (useKalman) "kf:imu+mag" else "cf:imu+mag",
-            debugMsg         = "A1: gz=${"%.2f".format(gyroZDegS)} mag=${"%.1f".format(magHeading)} tilt=${"%.1f".format(tiltDeg)} sea=${"%.2f".format(seaState)} db=${"%.1f".format(autoDeadband)}° conf=${"%.2f".format(magConf)} $filterLabel → ${"%.1f".format(fused)}"
+            debugMsg         = "A1: gz=${"%.2f".format(gyroZDegS)} mag=${"%.1f".format(magHeading)}${if (magSpikeRejected) "⚡SPIKE" else ""} tilt=${"%.1f".format(tiltDeg)} sea=${"%.2f".format(seaState)} db=${"%.1f".format(autoDeadband)}° conf=${"%.2f".format(magConf)} $filterLabel → ${"%.1f".format(fused)}"
         )
         onFusedHeading?.invoke(state)
     }
@@ -729,13 +842,14 @@ class SensorFusion {
      * @param nowMs          Current time ms
      */
     fun processA2(
-        tarHeadingDeg: Float,
-        pitchDeg:      Float,
-        rollDeg:       Float,
-        tarAccDeg:     Float,
-        gnssQuality:   Int,
-        satellites:    Int,
-        nowMs:         Long
+        tarHeadingDeg:   Float,
+        pitchDeg:        Float,
+        rollDeg:         Float,
+        tarAccDeg:       Float,
+        solvedBaselineM: Float,   // LC02H bytes 6-7: solved antenna baseline (metres)
+        gnssQuality:     Int,
+        satellites:      Int,
+        nowMs:           Long
     ) {
         val speedKt = cachedRmcSpeed
 
@@ -753,7 +867,25 @@ class SensorFusion {
         val satFactor  = ((satellites - 4f) / 4f).coerceIn(0f, 1f)
         val tarSpeedFactor = ((speedKt - 0.3f) / 0.2f).coerceIn(0.4f, 1f)
 
-        var wTar = qualFactor * accFactor * satFactor * tarSpeedFactor
+        // ── LC02H solved baseline gate ────────────────────────────────────────
+        // Feed calibration accumulator (no-op unless startBaselineCalibration() called)
+        feedBaselineSample(solvedBaselineM)
+
+        // Gate: discard heading if solved baseline deviates from reference.
+        // This means LC02H geometry is poor (multipath, partial lock, wrong config).
+        val refBaseline = referenceBaselineM
+        val baselineDiff = abs(solvedBaselineM - refBaseline)
+        val baselineOk = solvedBaselineM > 0f && baselineDiff <= baselineToleranceM
+
+        // ── LC02H tilt rejection ──────────────────────────────────────────────
+        val pitchCorrected = pitchDeg - pitchBaselineDeg
+        val rollCorrected  = rollDeg  - rollBaselineDeg
+        val lcTiltDeg      = sqrt(pitchCorrected * pitchCorrected + rollCorrected * rollCorrected)
+        val tiltRejectFactor = (1f - lcTiltDeg / maxTiltForGnssDeg).coerceIn(0f, 1f)
+
+        // wTar: zero if baseline bad, otherwise normal quality weighting × tilt
+        var wTar = if (!baselineOk) 0f
+        else qualFactor * accFactor * satFactor * tarSpeedFactor * tiltRejectFactor
 
         // ── RMC COG weight (from cached A3) ─────────────────────────────────
         var wRmc = if (cachedRmcValid) ((speedKt - 0.5f) / 1.5f).coerceIn(0f, 1f) else 0f
@@ -828,11 +960,25 @@ class SensorFusion {
             hasFix                = gnssQuality >= 4,
             satellites            = satellites,
             headingConf           = conf,
+            pitchDeg              = pitchDeg,
+            rollDeg               = rollDeg,
+            solvedBaselineM       = solvedBaselineM,
             magCalibrated         = magCalibrated,
             tarMisalignDeg        = tarMisalignEstimate,
             tarMisalignCalibrated = tarMisalignCalibrated,
             source                = if (useKalman) "kf:gnss+imu" else "cf:gnss+imu",
-            debugMsg              = "A2: tar=${"%.1f".format(tarHeadingDeg)}${if (tarMisalignCalibrated) "(+${"%.1f".format(tarMisalignEstimate)}°)" else ""}(w=${"%.2f".format(wTar)}) rmc=${"%.1f".format(cachedRmcHeading)}(w=${"%.2f".format(wRmc)}) → ${"%.1f".format(fused)} conf=${"%.2f".format(conf)}(raw=${"%.2f".format(rawConf)} turn=${"%.2f".format(turnPenalty)} sea=${"%.2f".format(seaPenaltyGnss)} tilt=${"%.2f".format(tiltPenalty)}) $filterLabel"
+            debugMsg              = run {
+                val baseStr = when {
+                    solvedBaselineM <= 0f -> "base=?"
+                    !baselineOk           -> "base=%.3fm⚠ref=%.3fm".format(solvedBaselineM, refBaseline)
+                    else                  -> "base=%.3fm✓".format(solvedBaselineM)
+                }
+                val misStr = if (tarMisalignCalibrated) "(+%.1f°)".format(tarMisalignEstimate) else ""
+                "A2: tar=%.1f%s(w=%.2f) rmc=%.1f(w=%.2f) %s p=%.1f° r=%.1f° tilt=%.2f → %.1f conf=%.2f %s"
+                    .format(tarHeadingDeg, misStr, wTar, cachedRmcHeading, wRmc,
+                        baseStr, pitchCorrected, rollCorrected, tiltRejectFactor,
+                        fused, conf, filterLabel)
+            }
         )
         onFusedHeading?.invoke(state)
     }

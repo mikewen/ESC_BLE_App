@@ -170,7 +170,77 @@
                         android:text="CLR" android:textSize="11sp"
                         android:backgroundTint="#1A0A0A" android:textColor="#884444"
                         style="@style/Widget.MaterialComponents.Button"/>
+
                 </LinearLayout>
+            </LinearLayout>
+
+        </androidx.cardview.widget.CardView>
+
+        <!-- ── LC02H Baseline Calibration ── -->
+        <androidx.cardview.widget.CardView android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:layout_marginBottom="12dp"
+            app:cardBackgroundColor="#080F1E" app:cardCornerRadius="10dp">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="vertical" android:padding="14dp">
+
+                <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:text="LC02H ANTENNA BASELINE" android:textColor="#55CCFF"
+                    android:textSize="13sp" android:textStyle="bold"
+                    android:fontFamily="monospace" android:layout_marginBottom="4dp"/>
+
+                <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:text="Keep boat perfectly still at dock. Measures the true effective antenna separation so you can update the LC02H config."
+                    android:textColor="#88AABBCC" android:textSize="12sp"
+                    android:layout_marginBottom="12dp"/>
+
+                <!-- Measured baseline input row -->
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical"
+                    android:layout_marginBottom="8dp">
+                    <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Measured baseline (m):"
+                        android:textColor="#88AABBCC" android:textSize="12sp"
+                        android:fontFamily="monospace"/>
+                    <EditText android:id="@+id/etMeasuredBaseline"
+                        android:layout_width="90dp" android:layout_height="40dp"
+                        android:inputType="numberDecimal"
+                        android:text="1.000"
+                        android:textColor="#14FFEC" android:textSize="14sp"
+                        android:fontFamily="monospace"
+                        android:textAlignment="center"
+                        android:background="@android:color/transparent"
+                        android:paddingHorizontal="4dp"/>
+                </LinearLayout>
+
+                <TextView android:id="@+id/tvBaselineCalStatus"
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:text="Tap START to calibrate"
+                    android:textColor="#55CCFF" android:textSize="12sp"
+                    android:fontFamily="monospace" android:layout_marginBottom="4dp"/>
+
+                <TextView android:id="@+id/tvBaselineCalSaved"
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:text="Not calibrated — using measured baseline"
+                    android:textColor="#55AABBCC" android:textSize="11sp"
+                    android:fontFamily="monospace" android:layout_marginBottom="12dp"/>
+
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal">
+                    <Button android:id="@+id/btnBaselineCalStart"
+                        android:layout_width="0dp" android:layout_height="44dp"
+                        android:layout_weight="1" android:text="▶ START (60s)"
+                        android:textSize="13sp" android:textStyle="bold"
+                        android:backgroundTint="#0D1A2E" android:textColor="#55CCFF"
+                        android:layout_marginEnd="6dp"
+                        style="@style/Widget.MaterialComponents.Button"/>
+                    <Button android:id="@+id/btnBaselineCalClear"
+                        android:layout_width="wrap_content" android:layout_height="44dp"
+                        android:text="CLR" android:textSize="11sp"
+                        android:backgroundTint="#1A0A0A" android:textColor="#884444"
+                        style="@style/Widget.MaterialComponents.Button"/>
+                </LinearLayout>
+
             </LinearLayout>
         </androidx.cardview.widget.CardView>
 
