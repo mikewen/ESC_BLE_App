@@ -89,8 +89,7 @@ class AutopilotActivity : AppCompatActivity() {
     // ── Timing ────────────────────────────────────────────────────────────────
     //private val CONTROL_INTERVAL_MS = 200L   // 5 Hz control loop
     private val CONTROL_INTERVAL_MS = 20L   // 50 Hz control loop
-    //private val HOLD_INTERVAL_MS    = 100L   // speed ramp tick
-    private val HOLD_INTERVAL_MS    = 10L   // speed ramp tick
+    private val HOLD_INTERVAL_MS    = 100L   // speed ramp tick
     private var isConnected         = false
 
     companion object {
