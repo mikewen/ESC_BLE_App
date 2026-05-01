@@ -34,8 +34,9 @@ class SensorFusion {
     /** Set true if turning right decreases heading (gz axis inverted on your PCB). */
     var gyroZFlipped: Boolean = true   // flipped by default for this hardware setup
 
-    /** Maximum believable yaw rate in °/s — rejects vibration spikes */
-    var maxHeadingRateDegS: Float = 60f
+    /** Maximum believable yaw rate in °/s — rejects vibration spikes.
+     *  Small boats can turn very quickly (90° in 1s) especially with differential thrust. */
+    var maxHeadingRateDegS: Float = 150f
 
     /** Base deadband in degrees (calm sea) */
     var baseDeadbandDeg: Float = 3f
@@ -58,6 +59,7 @@ class SensorFusion {
         val satellites:           Int     = 0,
         val headingConf:          Float   = 0f,
         val seaState:             Float   = 0f,
+        val gyroZDegS:            Float   = 0f,    // current yaw rate (CW positive)
         val tiltDeg:              Float   = 0f,
         val pitchDeg:             Float   = 0f,    // LC02H PQTMTAR pitch
         val rollDeg:              Float   = 0f,    // LC02H PQTMTAR roll
@@ -796,6 +798,7 @@ class SensorFusion {
             hasHeading       = true,
             headingConf      = magConf,
             seaState         = seaState,
+            gyroZDegS        = gyroZDegS,
             tiltDeg          = tiltDeg,
             autoDeadbandDeg  = autoDeadband,
             magCalibrated    = magCalibrated,
@@ -956,6 +959,7 @@ class SensorFusion {
         state = state.copy(
             headingDeg            = fused,
             speedKnots            = speedKt,
+            gyroZDegS             = lastGyroZDegS,
             hasHeading            = true,
             hasFix                = gnssQuality >= 4,
             satellites            = satellites,

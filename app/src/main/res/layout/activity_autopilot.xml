@@ -355,7 +355,8 @@
 
                 <!-- Ki row -->
                 <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:gravity="center_vertical">
+                    android:orientation="horizontal" android:gravity="center_vertical"
+                    android:layout_marginBottom="8dp">
                     <TextView android:text="Ki" android:textColor="#FFB300"
                         android:textSize="14sp" android:textStyle="bold"
                         android:fontFamily="monospace" android:layout_width="28dp"
@@ -379,6 +380,37 @@
                         android:layout_marginStart="6dp"
                         style="@style/Widget.MaterialComponents.Button"/>
                     <TextView android:text="  drift fix" android:textColor="#99AABBCC"
+                        android:textSize="12sp" android:fontFamily="monospace"
+                        android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                </LinearLayout>
+
+                <!-- Kd row (Gyro damping) -->
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical"
+                    android:layout_marginBottom="8dp">
+                    <TextView android:text="Kd" android:textColor="#FF88FF"
+                        android:textSize="14sp" android:textStyle="bold"
+                        android:fontFamily="monospace" android:layout_width="28dp"
+                        android:layout_height="wrap_content"/>
+                    <Button android:id="@+id/btnKdMinus"
+                        android:layout_width="44dp" android:layout_height="36dp"
+                        android:text="−" android:textSize="18sp"
+                        android:backgroundTint="#1A2E4A" android:textColor="#FF8888"
+                        android:layout_marginEnd="6dp"
+                        style="@style/Widget.MaterialComponents.Button"/>
+                    <TextView android:id="@+id/tvKdValue"
+                        android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:text="0.100"
+                        android:textColor="#FF88FF" android:textSize="18sp"
+                        android:textStyle="bold" android:fontFamily="monospace"
+                        android:gravity="center"/>
+                    <Button android:id="@+id/btnKdPlus"
+                        android:layout_width="44dp" android:layout_height="36dp"
+                        android:text="+" android:textSize="18sp"
+                        android:backgroundTint="#1A2E4A" android:textColor="#14FFEC"
+                        android:layout_marginStart="6dp"
+                        style="@style/Widget.MaterialComponents.Button"/>
+                    <TextView android:text="  gyro damp" android:textColor="#99AABBCC"
                         android:textSize="12sp" android:fontFamily="monospace"
                         android:layout_width="wrap_content" android:layout_height="wrap_content"/>
                 </LinearLayout>

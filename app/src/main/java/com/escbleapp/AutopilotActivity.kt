@@ -27,10 +27,11 @@ import kotlin.math.*
  * Works with AC6329C which provides heading from GPS/GNSS or 9DoF IMU via ae02.
  * Falls back to phone GPS heading if BLE heading unavailable.
  *
- * Algorithm: Simple proportional controller
+ * Algorithm: PID controller with Gyro-based D-term
  *   heading_error = target - actual   (wrapped to ±180°)
- *   differential  = error × Kp        (clamped to ±MAX_DIFF)
- *   port_pct      = base_speed + differential   (if error > 0, turn right → port faster)
+ *   yaw_rate      = gyro_z            (CW positive)
+ *   differential  = error × Kp + integral × Ki - yaw_rate × Kd (clamped to ±MAX_DIFF)
+ *   port_pct      = base_speed + differential  (if error > 0, turn right → port faster)
  *   stbd_pct      = base_speed - differential
  *
  * User controls:
@@ -41,7 +42,8 @@ import kotlin.math.*
  */
 class AutopilotActivity : AppCompatActivity() {
     enum class BoatType { TRIMARAN, MONOHULL }
-    private var boatType = BoatType.TRIMARAN
+    //private var boatType = BoatType.TRIMARAN
+    private var boatType = BoatType.MONOHULL
 
     private lateinit var binding: ActivityAutopilotBinding
     private lateinit var bleManager: AC6328BleManager
@@ -60,12 +62,14 @@ class AutopilotActivity : AppCompatActivity() {
     private var actualHeading = 0f
     private var hasHeading    = false
 
-    // ── PI controller ─────────────────────────────────────────────────────────
+    // ── PID controller ────────────────────────────────────────────────────────
     // All gains and deadband loaded from SharedPreferences — adjustable live
     private val KP_DEFAULT       = 0.8f
     private val KI_DEFAULT       = 0.05f
+    private val KD_DEFAULT       = 0.1f
     private val KP_STEP          = 0.05f
     private val KI_STEP          = 0.005f
+    private val KD_STEP          = 0.01f
     private val DEADBAND_DEFAULT = 3.0f   // degrees — no correction within this band
     private val DEADBAND_STEP    = 0.5f
     private val MAX_DIFF_PCT     = 30
@@ -73,6 +77,7 @@ class AutopilotActivity : AppCompatActivity() {
 
     private var Kp              = KP_DEFAULT
     private var Ki              = KI_DEFAULT
+    private var Kd              = KD_DEFAULT
     private var baseDeadbandDeg = DEADBAND_DEFAULT  // user-set base, saved to prefs
     private var deadbandDeg     = DEADBAND_DEFAULT  // effective = base + sea state addition
     private var autoDeadbandEnabled = true          // sea state adds to DB when true
@@ -82,8 +87,10 @@ class AutopilotActivity : AppCompatActivity() {
     private lateinit var prefs: SharedPreferences
 
     // ── Timing ────────────────────────────────────────────────────────────────
-    private val CONTROL_INTERVAL_MS = 200L   // 5 Hz control loop
-    private val HOLD_INTERVAL_MS    = 100L   // speed ramp tick
+    //private val CONTROL_INTERVAL_MS = 200L   // 5 Hz control loop
+    private val CONTROL_INTERVAL_MS = 20L   // 50 Hz control loop
+    //private val HOLD_INTERVAL_MS    = 100L   // speed ramp tick
+    private val HOLD_INTERVAL_MS    = 10L   // speed ramp tick
     private var isConnected         = false
 
     companion object {
@@ -129,10 +136,10 @@ class AutopilotActivity : AppCompatActivity() {
     private fun loadBoatTuning() {
         when (boatType) {
             BoatType.TRIMARAN -> {
-                Kp = 0.5f; Ki = 0.02f; baseDeadbandDeg = 2f
+                Kp = 0.5f; Ki = 0.02f; Kd = 0.05f; baseDeadbandDeg = 2f
             }
             BoatType.MONOHULL -> {
-                Kp = 1.2f; Ki = 0.08f; baseDeadbandDeg = 4f
+                Kp = 1.2f; Ki = 0.08f; Kd = 0.2f; baseDeadbandDeg = 4f
             }
         }
     }
@@ -154,11 +161,12 @@ class AutopilotActivity : AppCompatActivity() {
         baseSpeedPct    = intent.getIntExtra(EXTRA_INIT_SPEED_PCT, 0)
 
         loadBoatTuning()
-        // Load saved Kp/Ki
+        // Load saved PID gains
         prefs       = getSharedPreferences("autopilot_prefs", Context.MODE_PRIVATE)
-        Kp          = prefs.getFloat("kp", KP_DEFAULT)
-        Ki          = prefs.getFloat("ki", KI_DEFAULT)
-        baseDeadbandDeg = prefs.getFloat("deadband", DEADBAND_DEFAULT)
+        Kp          = prefs.getFloat("kp", Kp)
+        Ki          = prefs.getFloat("ki", Ki)
+        Kd          = prefs.getFloat("kd", Kd)
+        baseDeadbandDeg = prefs.getFloat("deadband", baseDeadbandDeg)
         deadbandDeg = baseDeadbandDeg
 
         binding.tvApDeviceName.text = deviceName
@@ -347,7 +355,7 @@ class AutopilotActivity : AppCompatActivity() {
     // ── Control loop ──────────────────────────────────────────────────────────
 
     /**
-     * PI heading controller with deadband and confidence scaling.
+     * PID heading controller with deadband and confidence scaling.
      *
      * Deadband: if |error| < deadbandDeg → no correction (both motors equal).
      *   Prevents constant micro-corrections from GPS noise on a slow boat.
@@ -355,13 +363,14 @@ class AutopilotActivity : AppCompatActivity() {
      * Confidence scaling: multiply correction by headingConfidence (0–1).
      *   headingConfidence = clamp(speedMs / sAcc, 0, 1) from NAV2-SOL.
      *   When GPS heading is noisy (low speed or high sAcc), correction is reduced.
+     *
+     * Derivative term (Kd): Uses gyro yaw rate directly for immediate damping.
+     *   Since error = target - actual, dError/dt = -dActual/dt = -gyro_rate.
      */
     private fun runControlStep() {
         if (!isConnected) return
         // When engaged, run even without confirmed heading — use whatever is available.
-        // headingConfidence will be low (≤0.3) so PI output is naturally dampened.
         if (!hasHeading && actualHeading == 0f) {
-            // No heading at all yet — nothing to do
             showToast("⚠ Waiting for heading…")
             return
         }
@@ -379,7 +388,7 @@ class AutopilotActivity : AppCompatActivity() {
                 targetHdg = targetHeading, actualHdg = actualHeading,
                 magHdg = fusionState.rawMagHeadingDeg, error = error,
                 deadband = deadbandDeg, inDeadband = true,
-                pTerm = 0f, iTerm = 0f, integral = headingIntegral,
+                pTerm = 0f, iTerm = 0f, dTerm = 0f, integral = headingIntegral,
                 rawDiff = 0f, finalDiff = 0f,
                 baseSpeed = baseSpeedPct, portPct = baseSpeedPct, stbdPct = baseSpeedPct,
                 conf = headingConfidence, speedKt = gpsManager.getCurrentData().speedKnots,
@@ -392,9 +401,16 @@ class AutopilotActivity : AppCompatActivity() {
         }
 
         val newIntegral = (headingIntegral + error * dt).coerceIn(-MAX_INTEGRAL, MAX_INTEGRAL)
-        val pTerm   = error * Kp
-        val iTerm   = newIntegral * Ki
-        val rawDiff = (pTerm + iTerm) * headingConfidence
+        
+        // PID Calculation
+        val pTerm = error * Kp
+        val iTerm = newIntegral * Ki
+        // D-term uses Gyro directly. CW rotation = positive gyro, which should decrease port motor.
+        val dTerm = -fusionState.gyroZDegS * Kd
+        
+        val rawDiff = (pTerm + iTerm + dTerm) * headingConfidence
+        
+        // Compensate for speed: higher speed needs less differential for the same turn rate
         val speedFactor = (50f / max(baseSpeedPct, 10)).coerceIn(0.5f, 2.0f)
         val scaledDiff  = rawDiff * speedFactor
         val diff        = scaledDiff.coerceIn(-MAX_DIFF_PCT.toFloat(), MAX_DIFF_PCT.toFloat())
@@ -410,12 +426,12 @@ class AutopilotActivity : AppCompatActivity() {
         sendMotors(portPct, stbdPct)
         updateMotorDisplay(portPct, stbdPct, error)
 
-        // Log CTRL row with full PI internals
+        // Log CTRL row with full PID internals
         apLogger.logCtrl(
             targetHdg = targetHeading, actualHdg = actualHeading,
             magHdg = fusionState.rawMagHeadingDeg, error = error,
             deadband = deadbandDeg, inDeadband = false,
-            pTerm = pTerm, iTerm = iTerm, integral = headingIntegral,
+            pTerm = pTerm, iTerm = iTerm, dTerm = dTerm, integral = headingIntegral,
             rawDiff = rawDiff, finalDiff = finalDiff,
             baseSpeed = baseSpeedPct, portPct = portPct, stbdPct = stbdPct,
             conf = headingConfidence, speedKt = gpsManager.getCurrentData().speedKnots,
@@ -483,6 +499,7 @@ class AutopilotActivity : AppCompatActivity() {
         if (path != null) showToast("📝 Logging: ${path.substringAfterLast('/')}")
     }
 
+
     private fun disengage() {
         engaged = false
         headingIntegral = 0f
@@ -494,7 +511,6 @@ class AutopilotActivity : AppCompatActivity() {
         if (isConnected) bleManager.stopMotors()
         updateMotorDisplay(0, 0, 0f)
 
-        // Stop log
         gpsManager.autopilotLogger = null
         apLogger.stop()
         apLogger.logFilePath?.let { showToast("📝 Saved: ${it.substringAfterLast('/')}") }
@@ -580,7 +596,6 @@ class AutopilotActivity : AppCompatActivity() {
             override fun onStopTrackingTouch(sb: SeekBar) {}
         })
 
-        // Hold ▲▼ to ramp speed
         fun holdSpeed(btn: android.widget.Button, delta: Int) {
             val ramp = object : Runnable {
                 override fun run() {
@@ -638,7 +653,7 @@ class AutopilotActivity : AppCompatActivity() {
         }
     }
 
-    // ── Tuning (Kp / Ki) ─────────────────────────────────────────────────────
+    // ── Tuning (Kp / Ki / Kd) ────────────────────────────────────────────────
 
     private fun setupTuning() {
         updateTuningDisplay()
@@ -664,12 +679,13 @@ class AutopilotActivity : AppCompatActivity() {
         binding.btnKpMinus.setOnClickListener       { adjustKp(-KP_STEP) }
         binding.btnKiPlus.setOnClickListener        { adjustKi(+KI_STEP) }
         binding.btnKiMinus.setOnClickListener       { adjustKi(-KI_STEP) }
+        binding.btnKdPlus?.setOnClickListener       { adjustKd(+KD_STEP) }
+        binding.btnKdMinus?.setOnClickListener      { adjustKd(-KD_STEP) }
         binding.btnDeadbandPlus.setOnClickListener  { adjustDeadband(+DEADBAND_STEP) }
         binding.btnDeadbandMinus.setOnClickListener { adjustDeadband(-DEADBAND_STEP) }
 
         binding.btnResetGains.setOnClickListener {
-            Kp = KP_DEFAULT; Ki = KI_DEFAULT; baseDeadbandDeg = DEADBAND_DEFAULT
-            deadbandDeg = DEADBAND_DEFAULT
+            loadBoatTuning() // Resets to boat defaults
             headingIntegral = 0f
             saveGains(); updateTuningDisplay()
             showToast("Gains reset to defaults")
@@ -686,9 +702,13 @@ class AutopilotActivity : AppCompatActivity() {
         headingIntegral = 0f
         saveGains(); updateTuningDisplay()
     }
+    
+    private fun adjustKd(delta: Float) {
+        Kd = (Kd + delta).coerceIn(0.0f, 2.0f)
+        saveGains(); updateTuningDisplay()
+    }
 
     private fun adjustDeadband(delta: Float) {
-        // Adjust the base deadband — sea state adds on top of this at runtime
         baseDeadbandDeg = (baseDeadbandDeg + delta).coerceIn(0.0f, 15.0f)
         headingIntegral = 0f
         saveGains(); updateTuningDisplay()
@@ -698,6 +718,7 @@ class AutopilotActivity : AppCompatActivity() {
         prefs.edit()
             .putFloat("kp", Kp)
             .putFloat("ki", Ki)
+            .putFloat("kd", Kd)
             .putFloat("deadband", baseDeadbandDeg)
             .apply()
     }
@@ -706,7 +727,7 @@ class AutopilotActivity : AppCompatActivity() {
     private fun updateTuningDisplay() {
         binding.tvKpValue.text       = "%.2f".format(Kp)
         binding.tvKiValue.text       = "%.3f".format(Ki)
-        // Show base + effective: "3.0° (+2.1°sea)"
+        binding.tvKdValue?.text      = "%.3f".format(Kd)
         val seaAdd = deadbandDeg - baseDeadbandDeg
         binding.tvDeadbandValue.text = if (seaAdd > 0.1f)
             "%.1f°(+%.1f°)".format(baseDeadbandDeg, seaAdd)
@@ -783,7 +804,6 @@ class AutopilotActivity : AppCompatActivity() {
                 targetHeading = ((targetHeading + cmd.courseDelta) + 360f) % 360f
                 updateCourseDisplay()
             }
-            // Individual motor commands — not applicable in autopilot (autopilot owns differential)
         }
     }
 }
