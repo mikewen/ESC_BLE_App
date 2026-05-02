@@ -4,15 +4,19 @@ import android.annotation.SuppressLint
 import android.content.Intent
 import android.os.Bundle
 import android.preference.PreferenceManager
-import android.view.MotionEvent
+import android.view.View
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import com.escbleapp.databinding.ActivityMapPickerBinding
+import com.google.android.material.chip.Chip
+import org.json.JSONArray
+import org.json.JSONObject
 import org.osmdroid.config.Configuration
 import org.osmdroid.events.MapEventsReceiver
 import org.osmdroid.tileprovider.tilesource.OnlineTileSourceBase
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
-import org.osmdroid.util.MapTileIndex
 import org.osmdroid.util.GeoPoint
+import org.osmdroid.util.MapTileIndex
 import org.osmdroid.views.overlay.MapEventsOverlay
 import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.mylocation.GpsMyLocationProvider
@@ -22,10 +26,10 @@ import kotlin.math.*
 /**
  * Full-screen map for picking an autopilot waypoint.
  *
- * Uses OSMDroid (OpenStreetMap) — no API key required.
  * Tap anywhere on the map to drop a target pin.
- * Calculates bearing from current position to target.
- * Returns: RESULT_TARGET_BEARING (float), RESULT_TARGET_LAT, RESULT_TARGET_LON.
+ * 💾 saves the current pin with a user-defined name.
+ * Saved targets appear as chips — tap to restore, long-press to delete.
+ * Targets persisted to SharedPreferences as JSON in key "saved_map_targets".
  */
 class MapPickerActivity : AppCompatActivity() {
 
@@ -37,6 +41,9 @@ class MapPickerActivity : AppCompatActivity() {
     private var currentLon = 0.0
     private var hasCurrentLoc = false
 
+    data class SavedTarget(val name: String, val lat: Double, val lon: Double)
+    private val savedTargets = mutableListOf<SavedTarget>()
+
     companion object {
         const val RESULT_TARGET_BEARING = "result_bearing"
         const val RESULT_TARGET_LAT     = "result_lat"
@@ -44,31 +51,109 @@ class MapPickerActivity : AppCompatActivity() {
         const val EXTRA_CURRENT_LAT     = "current_lat"
         const val EXTRA_CURRENT_LON     = "current_lon"
         const val EXTRA_CURRENT_HEADING = "current_heading"
+        private const val PREFS_KEY     = "saved_map_targets"
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        // OSMDroid config — must be before setContentView
-        Configuration.getInstance().load(this,
-            PreferenceManager.getDefaultSharedPreferences(this))
+        Configuration.getInstance().load(this, PreferenceManager.getDefaultSharedPreferences(this))
         Configuration.getInstance().userAgentValue = packageName
-
         binding = ActivityMapPickerBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        // Starting position from intent
-        currentLat  = intent.getDoubleExtra(EXTRA_CURRENT_LAT, 0.0)
-        currentLon  = intent.getDoubleExtra(EXTRA_CURRENT_LON, 0.0)
+        currentLat    = intent.getDoubleExtra(EXTRA_CURRENT_LAT, 0.0)
+        currentLon    = intent.getDoubleExtra(EXTRA_CURRENT_LON, 0.0)
         hasCurrentLoc = currentLat != 0.0 || currentLon != 0.0
 
+        loadSavedTargets()
         setupMap()
         setupButtons()
+        refreshChips()
     }
+
+    // ── Persistence ───────────────────────────────────────────────────────────
+
+    private fun loadSavedTargets() {
+        val json = getSharedPreferences("map_prefs", MODE_PRIVATE)
+            .getString(PREFS_KEY, "[]") ?: "[]"
+        savedTargets.clear()
+        try {
+            val arr = JSONArray(json)
+            for (i in 0 until arr.length()) {
+                val o = arr.getJSONObject(i)
+                savedTargets.add(SavedTarget(o.getString("name"), o.getDouble("lat"), o.getDouble("lon")))
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun persistTargets() {
+        val arr = JSONArray()
+        savedTargets.forEach { arr.put(JSONObject().put("name", it.name).put("lat", it.lat).put("lon", it.lon)) }
+        getSharedPreferences("map_prefs", MODE_PRIVATE)
+            .edit().putString(PREFS_KEY, arr.toString()).apply()
+    }
+
+    private fun promptSave() {
+        val pt = targetGeoPoint ?: return
+        val input = android.widget.EditText(this).apply {
+            hint = "Target name"
+            setSingleLine()
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Save target")
+            .setView(input)
+            .setPositiveButton("Save") { _, _ ->
+                val name = input.text.toString().trim()
+                    .ifEmpty { "%.4f, %.4f".format(pt.latitude, pt.longitude) }
+                savedTargets.removeAll { it.name == name }   // replace if same name
+                savedTargets.add(SavedTarget(name, pt.latitude, pt.longitude))
+                persistTargets()
+                refreshChips()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    // ── Chips ─────────────────────────────────────────────────────────────────
+
+    private fun refreshChips() {
+        binding.chipGroupTargets.removeAllViews()
+        binding.scrollSavedTargets.visibility =
+            if (savedTargets.isEmpty()) View.GONE else View.VISIBLE
+
+        savedTargets.forEachIndexed { i, target ->
+            val chip = Chip(this).apply {
+                text = target.name
+                isClickable = true; isCheckable = false
+                chipBackgroundColor = android.content.res.ColorStateList
+                    .valueOf(android.graphics.Color.parseColor("#0D2233"))
+                setTextColor(android.graphics.Color.parseColor("#88CCFF"))
+                textSize = 11f
+
+                setOnClickListener {
+                    val pt = GeoPoint(target.lat, target.lon)
+                    placeTargetMarker(pt)
+                    binding.mapView.controller.animateTo(pt)
+                }
+
+                setOnLongClickListener {
+                    AlertDialog.Builder(this@MapPickerActivity)
+                        .setTitle("Delete \"${target.name}\"?")
+                        .setPositiveButton("Delete") { _, _ ->
+                            savedTargets.removeAt(i); persistTargets(); refreshChips()
+                        }
+                        .setNegativeButton("Cancel", null).show()
+                    true
+                }
+            }
+            binding.chipGroupTargets.addView(chip)
+        }
+    }
+
+    // ── Map ───────────────────────────────────────────────────────────────────
 
     private var isSatellite = false
 
-    // ESRI World Imagery — free satellite tiles, no API key
     private val ESRI_SATELLITE = object : OnlineTileSourceBase(
         "ESRI_Satellite", 0, 19, 256, ".jpg",
         arrayOf("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/")
@@ -81,21 +166,13 @@ class MapPickerActivity : AppCompatActivity() {
         val map = binding.mapView
         map.setTileSource(TileSourceFactory.MAPNIK)
         map.setMultiTouchControls(true)
-
-        val startPoint = if (hasCurrentLoc)
-            GeoPoint(currentLat, currentLon) else GeoPoint(0.0, 0.0)
+        val start = if (hasCurrentLoc) GeoPoint(currentLat, currentLon) else GeoPoint(0.0, 0.0)
         map.controller.setZoom(if (hasCurrentLoc) 14.0 else 3.0)
-        map.controller.setCenter(startPoint)
-
-        locationOverlay = MyLocationNewOverlay(GpsMyLocationProvider(this), map).apply {
-            enableMyLocation()
-        }
+        map.controller.setCenter(start)
+        locationOverlay = MyLocationNewOverlay(GpsMyLocationProvider(this), map).apply { enableMyLocation() }
         map.overlays.add(locationOverlay)
-
         map.overlays.add(MapEventsOverlay(object : MapEventsReceiver {
-            override fun singleTapConfirmedHelper(p: GeoPoint): Boolean {
-                placeTargetMarker(p); return true
-            }
+            override fun singleTapConfirmedHelper(p: GeoPoint): Boolean { placeTargetMarker(p); return true }
             override fun longPressHelper(p: GeoPoint) = false
         }))
     }
@@ -110,55 +187,45 @@ class MapPickerActivity : AppCompatActivity() {
     @SuppressLint("SetTextI18n")
     private fun placeTargetMarker(point: GeoPoint) {
         val map = binding.mapView
-
-        // Remove old marker
         targetMarker?.let { map.overlays.remove(it) }
-
-        // Add new marker
         targetMarker = Marker(map).apply {
-            position  = point
-            title     = "Target"
+            position = point; title = "Target"
             setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
         }
         map.overlays.add(targetMarker)
         map.invalidate()
-
         targetGeoPoint = point
 
-        // Calculate bearing from current position to target
-        val bearingStr: String
         if (hasCurrentLoc) {
             val bearing = bearingTo(currentLat, currentLon, point.latitude, point.longitude)
             val distNm  = haversineNm(currentLat, currentLon, point.latitude, point.longitude)
-            bearingStr  = "→ %.0f°  %.2f nm".format(bearing, distNm)
             binding.tvMapBearing.text = "%.0f°".format(bearing)
+            binding.tvMapCoords.text  =
+                "%.5f, %.5f   → %.0f°  %.2f nm".format(point.latitude, point.longitude, bearing, distNm)
         } else {
-            bearingStr = "No current position"
             binding.tvMapBearing.text = ""
+            binding.tvMapCoords.text  = "%.5f, %.5f".format(point.latitude, point.longitude)
         }
 
-        binding.tvMapCoords.text =
-            "%.5f, %.5f   $bearingStr".format(point.latitude, point.longitude)
-        binding.tvMapInstruction.text = "Target set — confirm below"
+        binding.tvMapInstruction.text   = "Target set — tap SET TARGET or 💾"
         binding.btnMapConfirm.isEnabled = true
+        binding.btnSaveTarget.isEnabled = true
     }
 
     private fun setupButtons() {
-        binding.btnMapCancel.setOnClickListener { setResult(RESULT_CANCELED); finish() }
-        binding.btnMapLayer.setOnClickListener  { toggleSatellite() }
+        binding.btnMapCancel.setOnClickListener  { setResult(RESULT_CANCELED); finish() }
+        binding.btnMapLayer.setOnClickListener   { toggleSatellite() }
+        binding.btnSaveTarget.setOnClickListener { promptSave() }
 
         binding.btnMapConfirm.setOnClickListener {
             val pt = targetGeoPoint ?: return@setOnClickListener
             val bearing = if (hasCurrentLoc)
-                bearingTo(currentLat, currentLon, pt.latitude, pt.longitude)
-            else 0f
-
-            val result = Intent().apply {
+                bearingTo(currentLat, currentLon, pt.latitude, pt.longitude) else 0f
+            setResult(RESULT_OK, Intent().apply {
                 putExtra(RESULT_TARGET_BEARING, bearing)
                 putExtra(RESULT_TARGET_LAT,     pt.latitude)
                 putExtra(RESULT_TARGET_LON,     pt.longitude)
-            }
-            setResult(RESULT_OK, result)
+            })
             finish()
         }
     }
@@ -169,21 +236,18 @@ class MapPickerActivity : AppCompatActivity() {
 
     // ── Geo math ──────────────────────────────────────────────────────────────
 
-    /** Forward azimuth (bearing) from point 1 to point 2, degrees 0–360 */
     private fun bearingTo(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Float {
         val φ1 = Math.toRadians(lat1); val φ2 = Math.toRadians(lat2)
         val Δλ = Math.toRadians(lon2 - lon1)
-        val y  = sin(Δλ) * cos(φ2)
-        val x  = cos(φ1) * sin(φ2) - sin(φ1) * cos(φ2) * cos(Δλ)
-        return ((Math.toDegrees(atan2(y, x)) + 360) % 360).toFloat()
+        return ((Math.toDegrees(atan2(sin(Δλ) * cos(φ2),
+            cos(φ1) * sin(φ2) - sin(φ1) * cos(φ2) * cos(Δλ))) + 360) % 360).toFloat()
     }
 
     private fun haversineNm(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
         val R = 3440.065
-        val dLat = Math.toRadians(lat2 - lat1)
-        val dLon = Math.toRadians(lon2 - lon1)
-        val a = sin(dLat/2).pow(2) +
-                cos(Math.toRadians(lat1)) * cos(Math.toRadians(lat2)) * sin(dLon/2).pow(2)
+        val dLat = Math.toRadians(lat2 - lat1); val dLon = Math.toRadians(lon2 - lon1)
+        val a = sin(dLat / 2).pow(2) +
+                cos(Math.toRadians(lat1)) * cos(Math.toRadians(lat2)) * sin(dLon / 2).pow(2)
         return R * 2 * asin(sqrt(a))
     }
 }
