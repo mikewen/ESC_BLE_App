@@ -447,7 +447,7 @@ class GpsManager(private val context: Context) {
                     Log.i("GpsManager", "A3 valid fix received — switching to BLE GPS automatically")
                     usePhoneGps = false
                 }
-                fusion.processA3(lat, lon, speedKt, course, hasFix)
+                fusion.processA3(lat, lon, speedKt, course, hasFix, nowMs = System.currentTimeMillis())
             }
         }
     }

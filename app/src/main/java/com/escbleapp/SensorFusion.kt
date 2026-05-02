@@ -557,7 +557,7 @@ class SensorFusion {
          */
         var sigmaMag:   Float = 15f
         /** Base GPS measurement noise in degrees. Default 2°. */
-        var sigmaGps:   Float = 2f
+        //var sigmaGps:   Float = 2f
 
         fun reset() { initialised = false; bias = 0f; p00=10f; p01=0f; p10=0f; p11=1f }
 
@@ -740,12 +740,15 @@ class SensorFusion {
         val tiltFactor = (1f - tiltDeg / 30f).coerceIn(0f, 1f)
 
         // ── Mag weight ────────────────────────────────────────────────────────
-        val gnssRecent = (nowMs - lastGnssTimeMs) < 3_000L
+        //val gnssRecent = (nowMs - lastGnssTimeMs) < 3_000L
+        val gnssRecent = (nowMs - lastGnssTimeMs) < 1200L && state.speedKnots > 2.0f
+
         val gnssFactor = if (gnssRecent) (1f - state.headingConf * 0.8f) else 1f
         // Calibrated mag gets higher base weight (0.05 vs 0.02)
-        val magBase   = if (magCalibrated) 0.12f else 0.02f
+        //val magBase   = if (magCalibrated) 0.12f else 0.02f
+        val magBase = if (magCalibrated) 0.30f else 0.02f
 
-        //val turnRate = abs(gyroZDegS)   // reduce mag correction during rotation
+        //val turnRate = abs(gyroZDegS)   // need this one for magWeight
         //val turnFactor = (1f - turnRate / 30f).coerceIn(0.2f, 1f)
         //val magWeight = (magBase * tiltFactor * gnssFactor * turnFactor)
         // ── NEW: Speed Factor to reduce Mag weight when GPS COG is reliable ──
@@ -757,8 +760,8 @@ class SensorFusion {
         }
         //val magWeight = (magBase * tiltFactor * gnssFactor).coerceIn(0.02f, 0.35f)
         // Apply speed factor to final weight
-        val magWeight = (magBase * tiltFactor * gnssFactor * speedFactor)
-            .coerceIn(0.01f, 0.35f) // Lower min bound to allow very low mag influence
+        //val magWeight = (magBase * tiltFactor * gnssFactor * speedFactor).coerceIn(0.1f, 0.5f) // Lower min bound to allow very low mag influence
+        val magWeight = (magBase * tiltFactor * gnssFactor * speedFactor).coerceIn(0.02f, 0.5f)
 
         val fused: Float
         val filterLabel: String
@@ -779,24 +782,30 @@ class SensorFusion {
         // ── Heading confidence — mag-only source ─────────────────────────────
         // When GNSS is recent, keep A2-set confidence (it already includes all penalties).
         // When mag-only, compute confidence from mag reliability factors.
+        /*
         val magConf: Float = if (gnssRecent) {
             state.headingConf   // A2 already set a well-penalised conf — don't overwrite
         } else {
             // Base: calibrated mag is more reliable
             val magBase = if (magCalibrated) 0.6f else 0.3f
-            // Turn penalty: mag heading lags gyro during fast rotation
-            val turnPenaltyMag = (1f - abs(gyroZDegS) / 40f).coerceIn(0.2f, 1f)
+
+            //val lowSpeedBoost = if (speedKt < 2.0f) 1.8f else 1.0f
+            // Turn penalty: mag heading lags gyro during fast rotation (This is wrong, mag heading not lag)
+            //val turnPenaltyMag = (1f - abs(gyroZDegS) / 40f).coerceIn(0.2f, 1f)
             // Sea state penalty: wave yaw oscillation
-            val seaPenaltyMag  = (1f - seaState * 0.6f).coerceIn(0.4f, 1f)
+            //val seaPenaltyMag  = (1f - seaState * 0.6f).coerceIn(0.4f, 1f)
             // Tilt penalty: tilted mag is unreliable
-            val tiltPenaltyMag = tiltFactor.coerceIn(0.3f, 1f)
-            (magBase * turnPenaltyMag * seaPenaltyMag * tiltPenaltyMag).coerceIn(0f, 1f)
+            //val tiltPenaltyMag = tiltFactor.coerceIn(0.3f, 1f)
+            val tiltPenaltyMag = (1f - tiltDeg / 75f).coerceIn(0.55f, 1f)
+            (magBase * tiltPenaltyMag).coerceIn(0f, 1f)
         }
+        */
 
         state = state.copy(
             headingDeg       = fused,
             hasHeading       = true,
-            headingConf      = magConf,
+            //headingConf      = magConf,
+            headingConf      = (magWeight / 0.45f).coerceIn(0f, 1f),
             seaState         = seaState,
             gyroZDegS        = gyroZDegS,
             tiltDeg          = tiltDeg,
@@ -805,7 +814,7 @@ class SensorFusion {
             rawMagHeadingDeg = rawMagHeading,
             magSpikeRejected = magSpikeRejected,
             source           = if (useKalman) "kf:imu+mag" else "cf:imu+mag",
-            debugMsg         = "A1: gz=${"%.2f".format(gyroZDegS)} mag=${"%.1f".format(magHeading)}${if (magSpikeRejected) "⚡SPIKE" else ""} tilt=${"%.1f".format(tiltDeg)} sea=${"%.2f".format(seaState)} db=${"%.1f".format(autoDeadband)}° conf=${"%.2f".format(magConf)} $filterLabel → ${"%.1f".format(fused)}"
+            debugMsg         = "A1: gz=${"%.2f".format(gyroZDegS)} mag=${"%.1f".format(magHeading)}${if (magSpikeRejected) "⚡SPIKE" else ""} tilt=${"%.1f".format(tiltDeg)} sea=${"%.2f".format(seaState)} db=${"%.1f".format(autoDeadband)}° conf=${"%.2f".format(state.headingConf)} $filterLabel → ${"%.1f".format(fused)}"
         )
         onFusedHeading?.invoke(state)
     }
@@ -892,6 +901,7 @@ class SensorFusion {
 
         // ── RMC COG weight (from cached A3) ─────────────────────────────────
         var wRmc = if (cachedRmcValid) ((speedKt - 0.5f) / 1.5f).coerceIn(0f, 1f) else 0f
+        if (speedKt < 1.5f) { wRmc = 0f }
 
         val totalW = wTar + wRmc
         if (totalW <= 0f) {
@@ -942,9 +952,14 @@ class SensorFusion {
             filterLabel = "KF R=${"%.1f".format(rGps)} turn=${"%.1f".format(turnRate)}"
         } else {
             // #4: use lastGyroZDegS so CF predicts where heading is now between 1Hz updates
-            val turnFactor = (1f - turnRate / 20f).coerceIn(0.2f, 1f)
+            //val turnFactor = (1f - turnRate / 20f).coerceIn(0.2f, 1f)
+            val turnFactor = (1f - turnRate / 60f).coerceIn(0.3f, 1f)
             val dynamicW = filterW * turnFactor
-            fused = applyFilter(blended, lastGyroZDegS, dynamicW, 0.1f)
+            val dtGnss = if (lastGnssTimeMs > 0L)
+                ((nowMs - lastGnssTimeMs) / 1000f).coerceIn(0f, 2f)
+            else 1f
+            //fused = applyFilter(blended, lastGyroZDegS, dynamicW, 0.1f)
+            fused = applyFilter(blended, lastGyroZDegS, dynamicW, dtGnss)
             filterLabel = "CF w=${"%.3f".format(filterW)} tf=${"%.2f".format(turnFactor)}"
         }
 
@@ -1005,12 +1020,42 @@ class SensorFusion {
         lonDeg:  Double,
         speedKt: Float,
         cogDeg:  Float,
-        hasFix:  Boolean
+        hasFix:  Boolean,
+        nowMs:   Long
     ) {
         // Cache RMC COG + speed for blending in processA2
         cachedRmcSpeed   = speedKt
         cachedRmcHeading = cogDeg
         cachedRmcValid   = hasFix && speedKt >= 0.5f
+
+        // ── Update heading from RMC COG ──────────────────────────────
+        if (cachedRmcValid) {
+            val dt = if (lastGnssTimeMs > 0L)
+                ((nowMs - lastGnssTimeMs) / 1000f).coerceIn(0.01f, 2f)
+            else 1f
+            lastGnssTimeMs = nowMs
+
+            val fusedHeading = if (useKalman) {
+                if (!kalman.initialised) kalman.init(cogDeg)
+                kalman.predict(lastGyroZDegS, dt)
+                // GPS noise: lower at higher speed, clamp between 1° and 10°
+                val rGps = ((10f / (speedKt + 0.5f)).coerceIn(1f, 10f)).let { it * it }
+                kalman.update(cogDeg, rGps)
+                kalman.theta
+            } else {
+                val weight = (0.05f + (speedKt / 50f)).coerceIn(0.05f, 0.2f)
+                applyFilter(cogDeg, lastGyroZDegS, weight, dt)
+            }
+
+            state = state.copy(
+                headingDeg  = fusedHeading,
+                hasHeading  = true,
+                headingConf = (speedKt / 6f).coerceIn(0.05f, 0.9f),
+                source      = if (useKalman) "kf:gnss+imu (A3)" else "cf:gnss+imu (A3)",
+                debugMsg    = state.debugMsg + " | A3 ${if(useKalman)"KF" else "CF"} update"
+            )
+            onFusedHeading?.invoke(state)
+        }
 
         // Update magnetic declination from GPS position (recomputes only when moved >0.5°)
         if (hasFix && latDeg != 0.0) {

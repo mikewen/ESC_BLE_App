@@ -113,10 +113,6 @@ class ControlActivity : AppCompatActivity() {
         setupBackPress()
         updateUi(false)
 
-        // Apply GPS source preference from MainActivity
-        if (intent.getBooleanExtra(EXTRA_PREFER_PHONE_GPS, false))
-            gpsManager.setPreferPhoneGps() else gpsManager.setPreferBleGps()
-
         // Connect remote if one was found in MainActivity scan
         val remoteDevice: BluetoothDevice? = if (android.os.Build.VERSION.SDK_INT >= 33)
             intent.getParcelableExtra(EXTRA_REMOTE_DEVICE, BluetoothDevice::class.java)
@@ -553,6 +549,7 @@ class ControlActivity : AppCompatActivity() {
         }
 
         binding.btnGpsSource.setOnClickListener {
+            // This is confusing to user
             val preferBle = binding.btnGpsSource.text == "BLE"
             if (preferBle) {
                 gpsManager.setPreferBleGps()
@@ -561,6 +558,7 @@ class ControlActivity : AppCompatActivity() {
             } else {
                 gpsManager.setPreferPhoneGps()
                 binding.btnGpsSource.text = "BLE"
+                showToast("Using phone GPS")
                 requestPhoneGps()
             }
         }
@@ -589,7 +587,19 @@ class ControlActivity : AppCompatActivity() {
             showToast("Trip reset")
         }
 
-        requestPhoneGps()
+        // Apply GPS source preference BEFORE starting GPS
+        val preferPhone = intent.getBooleanExtra(EXTRA_PREFER_PHONE_GPS, false)
+        if (preferPhone) {
+            gpsManager.setPreferPhoneGps()
+            binding.btnGpsSource.text = "BLE"    // button shows what you'd switch TO
+            requestPhoneGps()
+        } else {
+            gpsManager.setPreferBleGps()
+            binding.btnGpsSource.text = "📱"     // button shows what you'd switch TO
+            // Start phone GPS in background for location permission / declination only
+            // GpsManager will ignore phone position updates when usePhoneGps=false
+            if (gpsManager.hasLocationPermission()) gpsManager.startPhoneGps()
+        }
     }
 
     private fun requestPhoneGps() {
