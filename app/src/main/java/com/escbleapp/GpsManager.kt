@@ -183,7 +183,8 @@ class GpsManager(private val context: Context) {
 
     // ── Source preference ─────────────────────────────────────────────────────
 
-    private var usePhoneGps = true
+    var usePhoneGps = true
+        private set
 
     fun setPreferBleGps()   { usePhoneGps = false }
     fun setPreferPhoneGps() { usePhoneGps = true  }

@@ -87,8 +87,7 @@ class AutopilotActivity : AppCompatActivity() {
     private lateinit var prefs: SharedPreferences
 
     // ── Timing ────────────────────────────────────────────────────────────────
-    //private val CONTROL_INTERVAL_MS = 200L   // 5 Hz control loop
-    private val CONTROL_INTERVAL_MS = 20L   // 50 Hz control loop
+    private val CONTROL_INTERVAL_MS = 20L    // 50 Hz control loop
     private val HOLD_INTERVAL_MS    = 100L   // speed ramp tick
     private var isConnected         = false
 
@@ -100,6 +99,8 @@ class AutopilotActivity : AppCompatActivity() {
         const val EXTRA_REMOTE_DEVICE    = "extra_remote_device"
         const val EXTRA_SENSOR2_DEVICE   = "extra_sensor2_device"
         const val EXTRA_SENSOR2_NAME     = "extra_sensor2_name"
+        const val EXTRA_BOAT_TYPE        = "extra_boat_type"
+        const val EXTRA_PREFER_PHONE_GPS = "extra_prefer_phone_gps"
     }
 
     // Map picker result launcher
@@ -159,6 +160,10 @@ class AutopilotActivity : AppCompatActivity() {
         escMode         = intent.getBooleanExtra(EXTRA_ESC_MODE, true)
         baseSpeedPct    = intent.getIntExtra(EXTRA_INIT_SPEED_PCT, 0)
 
+        intent.getStringExtra(EXTRA_BOAT_TYPE)?.let {
+            try { boatType = BoatType.valueOf(it) } catch (e: Exception) {}
+        }
+
         loadBoatTuning()
         // Load saved PID gains
         prefs       = getSharedPreferences("autopilot_prefs", Context.MODE_PRIVATE)
@@ -172,6 +177,13 @@ class AutopilotActivity : AppCompatActivity() {
 
         setupBleManager(device)
         setupGps()
+
+        // Apply GPS source preference
+        if (intent.hasExtra(EXTRA_PREFER_PHONE_GPS)) {
+            if (intent.getBooleanExtra(EXTRA_PREFER_PHONE_GPS, true))
+                gpsManager.setPreferPhoneGps() else gpsManager.setPreferBleGps()
+        }
+
         setupCourseButtons()
         setupSpeedControls()
         setupEngageButtons()
@@ -368,23 +380,32 @@ class AutopilotActivity : AppCompatActivity() {
      */
     private fun runControlStep() {
         if (!isConnected) return
-        // When engaged, run even without confirmed heading — use whatever is available.
-        if (!hasHeading && actualHeading == 0f) {
+
+        // ── Read fusion state directly — avoids UI-thread latency on actualHeading ──
+        // At 50Hz the control loop must use the freshest heading available.
+        // gpsManager.fusion.getState() is always current regardless of UI callbacks.
+        val fusionState = gpsManager.fusion.getState()
+        val currentHeading = fusionState.headingDeg
+        val gyroZ          = fusionState.gyroZDegS   // yaw rate, CW positive
+
+        // Fall through if no heading yet
+        if (!fusionState.hasHeading && currentHeading == 0f) {
             showToast("⚠ Waiting for heading…")
             return
         }
 
         val dt    = CONTROL_INTERVAL_MS / 1000f
-        val error = headingError(targetHeading, actualHeading)
-        val fusionState = gpsManager.fusion.getState()
+        val error = headingError(targetHeading, currentHeading)
+
+        // Update actualHeading so display stays in sync
+        actualHeading = currentHeading
 
         if (Math.abs(error) < deadbandDeg) {
             headingIntegral *= 0.8f
             sendMotors(baseSpeedPct, baseSpeedPct)
             updateMotorDisplay(baseSpeedPct, baseSpeedPct, error)
-            // Log: in deadband — zero correction
             apLogger.logCtrl(
-                targetHdg = targetHeading, actualHdg = actualHeading,
+                targetHdg = targetHeading, actualHdg = currentHeading,
                 magHdg = fusionState.rawMagHeadingDeg, error = error,
                 deadband = deadbandDeg, inDeadband = true,
                 pTerm = 0f, iTerm = 0f, dTerm = 0f, integral = headingIntegral,
@@ -400,16 +421,14 @@ class AutopilotActivity : AppCompatActivity() {
         }
 
         val newIntegral = (headingIntegral + error * dt).coerceIn(-MAX_INTEGRAL, MAX_INTEGRAL)
-        
-        // PID Calculation
+
         val pTerm = error * Kp
         val iTerm = newIntegral * Ki
-        // D-term uses Gyro directly. CW rotation = positive gyro, which should decrease port motor.
-        val dTerm = -fusionState.gyroZDegS * Kd
-        
+        // D-term from gyro: opposes current yaw rate directly, no lag
+        val dTerm = -gyroZ * Kd
+
         val rawDiff = (pTerm + iTerm + dTerm) * headingConfidence
-        
-        // Compensate for speed: higher speed needs less differential for the same turn rate
+
         val speedFactor = (50f / max(baseSpeedPct, 10)).coerceIn(0.5f, 2.0f)
         val scaledDiff  = rawDiff * speedFactor
         val diff        = scaledDiff.coerceIn(-MAX_DIFF_PCT.toFloat(), MAX_DIFF_PCT.toFloat())
@@ -425,9 +444,8 @@ class AutopilotActivity : AppCompatActivity() {
         sendMotors(portPct, stbdPct)
         updateMotorDisplay(portPct, stbdPct, error)
 
-        // Log CTRL row with full PID internals
         apLogger.logCtrl(
-            targetHdg = targetHeading, actualHdg = actualHeading,
+            targetHdg = targetHeading, actualHdg = currentHeading,
             magHdg = fusionState.rawMagHeadingDeg, error = error,
             deadband = deadbandDeg, inDeadband = false,
             pTerm = pTerm, iTerm = iTerm, dTerm = dTerm, integral = headingIntegral,
@@ -701,7 +719,7 @@ class AutopilotActivity : AppCompatActivity() {
         headingIntegral = 0f
         saveGains(); updateTuningDisplay()
     }
-    
+
     private fun adjustKd(delta: Float) {
         Kd = (Kd + delta).coerceIn(0.0f, 2.0f)
         saveGains(); updateTuningDisplay()

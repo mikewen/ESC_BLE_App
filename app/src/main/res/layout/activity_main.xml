@@ -97,6 +97,48 @@
 
         </LinearLayout>
 
+        <!-- Settings chip row: Boat type · Motor type · GPS source -->
+        <com.google.android.material.chip.ChipGroup
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            app:singleLine="true">
+
+            <com.google.android.material.chip.Chip
+                android:id="@+id/chipBoatType"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="🚤 Trimaran"
+                android:checkable="true"
+                android:checked="false"
+                style="@style/Widget.MaterialComponents.Chip.Filter"
+                android:textColor="#CCFFFFFF"
+                app:chipBackgroundColor="#1A2E4A"/>
+
+            <com.google.android.material.chip.Chip
+                android:id="@+id/chipMotorMode"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="⚡ ESC"
+                android:checkable="true"
+                android:checked="true"
+                style="@style/Widget.MaterialComponents.Chip.Filter"
+                android:textColor="#CCFFFFFF"
+                app:chipBackgroundColor="#1A2E4A"/>
+
+            <com.google.android.material.chip.Chip
+                android:id="@+id/chipGpsSource"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="📡 BLE GPS"
+                android:checkable="true"
+                android:checked="false"
+                style="@style/Widget.MaterialComponents.Chip.Filter"
+                android:textColor="#CCFFFFFF"
+                app:chipBackgroundColor="#1A2E4A"/>
+
+        </com.google.android.material.chip.ChipGroup>
+
     </LinearLayout>
 
     <!-- Device list -->

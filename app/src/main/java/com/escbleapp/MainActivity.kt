@@ -95,8 +95,12 @@ class MainActivity : AppCompatActivity() {
                 adapter.imuAddress   = sensor2Device?.address
                 adapter.notifyDataSetChanged()
                 val intent = Intent(this, ControlActivity::class.java).apply {
-                    putExtra(ControlActivity.EXTRA_DEVICE, item.device)
-                    putExtra(ControlActivity.EXTRA_DEVICE_NAME, item.name)
+                    putExtra(ControlActivity.EXTRA_DEVICE,           item.device)
+                    putExtra(ControlActivity.EXTRA_DEVICE_NAME,      item.name)
+                    putExtra(ControlActivity.EXTRA_MOTOR_MODE_ESC,   binding.chipMotorMode.isChecked)
+                    putExtra(ControlActivity.EXTRA_PREFER_PHONE_GPS, binding.chipGpsSource.isChecked)
+                    putExtra(ControlActivity.EXTRA_BOAT_TYPE,
+                        if (binding.chipBoatType.isChecked) "TRIMARAN" else "MONOHULL")
                     remoteDevice?.let { putExtra(ControlActivity.EXTRA_REMOTE_DEVICE, it) }
                     sensor2Device?.let {
                         putExtra(ControlActivity.EXTRA_SENSOR2_DEVICE, it)
@@ -136,7 +140,21 @@ class MainActivity : AppCompatActivity() {
         binding.btnScanSensor2.setOnClickListener { startSensor2Scan() }
         updateSensor2Button()
 
-        binding.chipFilterEsc.setOnCheckedChangeListener { _, _ -> /* filter applied in callback */ }
+        binding.chipFilterEsc.setOnCheckedChangeListener { _, _ -> /* filter applied in scan callback */ }
+
+        // Persist settings chips
+        val prefs = getSharedPreferences("app_prefs", MODE_PRIVATE)
+        binding.chipBoatType.isChecked  = prefs.getBoolean("boat_trimaran", false)
+        binding.chipMotorMode.isChecked = prefs.getBoolean("motor_esc",     true)
+        binding.chipGpsSource.isChecked = prefs.getBoolean("gps_phone",     false)
+        updateSettingsChipLabels()
+
+        binding.chipBoatType.setOnCheckedChangeListener  { _, v ->
+            prefs.edit().putBoolean("boat_trimaran", v).apply(); updateSettingsChipLabels() }
+        binding.chipMotorMode.setOnCheckedChangeListener { _, v ->
+            prefs.edit().putBoolean("motor_esc",     v).apply(); updateSettingsChipLabels() }
+        binding.chipGpsSource.setOnCheckedChangeListener { _, v ->
+            prefs.edit().putBoolean("gps_phone",     v).apply(); updateSettingsChipLabels() }
     }
 
     // ── Remote scan ───────────────────────────────────────────────────────────
@@ -271,6 +289,12 @@ class MainActivity : AppCompatActivity() {
             }
         }
     }
+    private fun updateSettingsChipLabels() {
+        binding.chipBoatType.text  = if (binding.chipBoatType.isChecked)  "🚤 Trimaran"  else "⛵ Monohull"
+        binding.chipMotorMode.text = if (binding.chipMotorMode.isChecked) "⚡ ESC"        else "🔄 BLDC"
+        binding.chipGpsSource.text = if (binding.chipGpsSource.isChecked) "📱 Phone GPS"  else "📡 BLE GPS"
+    }
+
     private fun checkPermissionsAndScan() {
         val required = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             arrayOf(

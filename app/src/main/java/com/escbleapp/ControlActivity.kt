@@ -65,11 +65,14 @@ class ControlActivity : AppCompatActivity() {
     private var isConnected      = false
 
     companion object {
-        const val EXTRA_DEVICE         = "extra_device"       // primary: GNSS + motor PWM
+        const val EXTRA_DEVICE         = "extra_device"
         const val EXTRA_DEVICE_NAME    = "extra_device_name"
         const val EXTRA_REMOTE_DEVICE  = "extra_remote_device"
-        const val EXTRA_SENSOR2_DEVICE = "extra_sensor2_device"  // secondary: IMU/mag sensor
+        const val EXTRA_SENSOR2_DEVICE = "extra_sensor2_device"
         const val EXTRA_SENSOR2_NAME   = "extra_sensor2_name"
+        const val EXTRA_MOTOR_MODE_ESC   = "extra_motor_mode_esc"    // true=ESC false=BLDC
+        const val EXTRA_PREFER_PHONE_GPS = "extra_prefer_phone_gps"  // true=phone false=BLE
+        const val EXTRA_BOAT_TYPE        = "extra_boat_type"         // "TRIMARAN" or "MONOHULL"
     }
 
     // ── Runnables ─────────────────────────────────────────────────────────────
@@ -96,7 +99,10 @@ class ControlActivity : AppCompatActivity() {
         }
         val deviceName = intent.getStringExtra(EXTRA_DEVICE_NAME) ?: "ESC Device"
 
-        escMode = !deviceName.contains("BLDC", ignoreCase = true)
+        // Motor mode: explicit from MainActivity overrides device-name heuristic
+        escMode = if (intent.hasExtra(EXTRA_MOTOR_MODE_ESC))
+            intent.getBooleanExtra(EXTRA_MOTOR_MODE_ESC, true)
+        else !deviceName.contains("BLDC", ignoreCase = true)
 
         setupBleManager(device, deviceName)
         setupModeUi()
@@ -106,6 +112,10 @@ class ControlActivity : AppCompatActivity() {
         setupGps()
         setupBackPress()
         updateUi(false)
+
+        // Apply GPS source preference from MainActivity
+        if (intent.getBooleanExtra(EXTRA_PREFER_PHONE_GPS, false))
+            gpsManager.setPreferPhoneGps() else gpsManager.setPreferBleGps()
 
         // Connect remote if one was found in MainActivity scan
         val remoteDevice: BluetoothDevice? = if (android.os.Build.VERSION.SDK_INT >= 33)
@@ -324,9 +334,11 @@ class ControlActivity : AppCompatActivity() {
     private fun setupMainButtons() {
         binding.btnAutopilot.setOnClickListener {
             val intent = android.content.Intent(this, AutopilotActivity::class.java).apply {
-                putExtra(AutopilotActivity.EXTRA_DEVICE,      intent.getParcelableExtra<BluetoothDevice>(EXTRA_DEVICE))
-                putExtra(AutopilotActivity.EXTRA_DEVICE_NAME, intent.getStringExtra(EXTRA_DEVICE_NAME))
-                putExtra(AutopilotActivity.EXTRA_ESC_MODE,    escMode)
+                putExtra(AutopilotActivity.EXTRA_DEVICE,           intent.getParcelableExtra<BluetoothDevice>(EXTRA_DEVICE))
+                putExtra(AutopilotActivity.EXTRA_DEVICE_NAME,      intent.getStringExtra(EXTRA_DEVICE_NAME))
+                putExtra(AutopilotActivity.EXTRA_ESC_MODE,         escMode)
+                putExtra(AutopilotActivity.EXTRA_BOAT_TYPE,        intent.getStringExtra(EXTRA_BOAT_TYPE) ?: "MONOHULL")
+                putExtra(AutopilotActivity.EXTRA_PREFER_PHONE_GPS, gpsManager.usePhoneGps)
                 val pct = valToPct(portVal)
                 putExtra(AutopilotActivity.EXTRA_INIT_SPEED_PCT, pct)
                 // Pass remote device so autopilot can also receive remote commands

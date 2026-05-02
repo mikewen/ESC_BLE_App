@@ -114,9 +114,13 @@ MainActivity
        ├── Tap device     → motor controller (primary)
        ├── Tap [🔬 IMU]  → IMU/mag sensor (optional, A1 only)
        └── Scan Remote    → BLE remote (optional)
+  └── Settings chips (persisted to app_prefs, passed as intent extras)
+       ├── 🚤 Trimaran / ⛵ Monohull  → EXTRA_BOAT_TYPE → loadBoatTuning()
+       ├── ⚡ ESC / 🔄 BLDC           → EXTRA_MOTOR_MODE_ESC
+       └── 📡 BLE GPS / 📱 Phone GPS  → EXTRA_PREFER_PHONE_GPS
 
 ControlActivity          — manual throttle + sync + GPS card
-AutopilotActivity        — PI autopilot + sea state + Kalman/CF switch
+AutopilotActivity        — PID autopilot 50Hz + sea state + Kalman/CF switch
 CalibrationActivity      — mag, gyro, LC02H baseline calibration
 ```
 
@@ -284,29 +288,48 @@ and the previous accepted value is held. Shows `⚡SPIKE` in the debug log.
 
 ## Autopilot
 
-PI controller with adaptive deadband and heading confidence scaling.
+PID controller running at **50 Hz**, with adaptive deadband and heading confidence scaling.
+
+**Key design decisions:**
+- `actualHeading` is read directly from `gpsManager.fusion.getState().headingDeg` inside `runControlStep` — bypasses the `runOnUiThread` callback queue which can introduce 20–100ms latency at 50Hz
+- D-term uses `fusionState.gyroZDegS` (50Hz IMU) not a heading difference — gives instant damping against gusts before the heading error has time to grow
+- Integral is frozen (slow decay) when `|gyroZ| > GUST_GYRO_THRESHOLD` (15°/s) — prevents wind-up during gust-induced fast rotation
 
 ```
-error  = targetHeading − actualHeading  (wrapped ±180°)
+error    = targetHeading − actualHeading  (wrapped ±180°)
 
 if |error| < deadband:
-    integral × 0.8   (decay, don't reset — preserves bias compensation)
+    integral × 0.8   (decay, preserves current/wind bias compensation)
     motors = baseSpeed (equal)
 
 else:
-    integral = clamp(integral + error × dt, ±MAX_INTEGRAL)
-    rawDiff  = (error × Kp + integral × Ki) × headingConf
-    diff     = clamp(rawDiff × speedFactor, ±min(baseSpeed, 100−baseSpeed))
-    PORT     = baseSpeed + diff
-    STBD     = baseSpeed − diff
+    // Integral freeze during gust
+    if |gyroZ| > 15°/s:
+        integral × 0.95   (slow decay, don't reset abruptly)
+    else:
+        integral = clamp(integral + error × dt, ±MAX_INTEGRAL)
+
+    P       = error × Kp
+    I       = integral × Ki
+    D       = −gyroZ × Kd          ← opposes yaw rate, no heading lag
+    rawDiff = (P + I + D) × headingConf
+    diff    = clamp(rawDiff × speedFactor, ±min(baseSpeed, 100−baseSpeed))
+    PORT    = baseSpeed + diff
+    STBD    = baseSpeed − diff
 
 deadband = baseDeadbandDeg + seaState × 8°  (when autoDeadband enabled)
+speedFactor = clamp(50 / baseSpeed, 0.5, 2.0)
 ```
 
-**Default gains** (Trimaran): Kp=0.5, Ki=0.02, deadband=2°  
-**Default gains** (Monohull): Kp=1.2, Ki=0.08, deadband=4°
+**Default gains (Trimaran):** Kp=0.5, Ki=0.02, Kd=0.3, deadband=2°  
+**Default gains (Monohull):** Kp=1.2, Ki=0.08, Kd=0.3, deadband=4°
 
 Gains are saved to `autopilot_prefs` and survive app restart.
+
+**Boat type, motor mode, and GPS source** are selected on the main screen as chips
+(`chipBoatType`, `chipMotorMode`, `chipGpsSource`) and passed to `ControlActivity`
+via `EXTRA_BOAT_TYPE`, `EXTRA_MOTOR_MODE_ESC`, `EXTRA_PREFER_PHONE_GPS`. Persisted
+to `app_prefs`.
 
 ---
 
@@ -317,10 +340,10 @@ File: `Downloads/AP_yyyyMMdd_HHmmss.csv`
 
 | Row type | Rate | Key columns |
 |----------|------|-------------|
-| `CTRL` | 5 Hz | target/actual/mag heading, error, deadband, in_deadband, P/I terms, integral, raw_diff, final_diff, port/stbd %, conf, sea_state, lat/lon, filter, kalman_bias |
+| `CTRL` | 50 Hz | target/actual/mag heading, error, deadband, in_deadband, P/I/D terms, integral, raw_diff, final_diff, port/stbd %, conf, sea_state, lat/lon, filter, kalman_bias, gyro_z |
 | `SENS` | 10 Hz | ax/ay/az, gx/gy/gz, mx/my/mz, raw_mag_hdg, fused_hdg, gyro_z_dps, tilt_deg, sea_state |
-| `GPS` | 1 Hz | PQTMTAR heading, RMC COG, blended, quality, acc_deg, satellites, speed, lat/lon, misalign |
-| `CMD` | 5 Hz | port/stbd %, duty counts, ESC/BLDC mode |
+| `GPS`  | 1 Hz  | PQTMTAR heading, RMC COG, blended, quality, acc_deg, satellites, speed, lat/lon, misalign |
+| `CMD`  | 50 Hz | port/stbd %, duty counts, ESC/BLDC mode |
 
 All row types share one wide header row. Load in Python:
 ```python
@@ -390,11 +413,11 @@ WRITE_EXTERNAL_STORAGE    <!-- autopilot log to Downloads/ -->
 
 ## Build
 
-- **minSdk:** 23  
-- **Target:** 34  
-- **Language:** Kotlin  
-- **BLE library:** Nordic BLE Library v2.7  
-- **UI:** ViewBinding + Jetpack (no Compose)  
+- **minSdk:** 23
+- **Target:** 34
+- **Language:** Kotlin
+- **BLE library:** Nordic BLE Library v2.7
+- **UI:** ViewBinding + Jetpack (no Compose)
 - **Package:** `com.escbleapp`
 
 ```bash
