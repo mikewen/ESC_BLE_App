@@ -166,17 +166,20 @@ class AutopilotActivity : AppCompatActivity() {
 
         loadBoatTuning()
         // Load saved PID gains
-        prefs       = getSharedPreferences("autopilot_prefs", Context.MODE_PRIVATE)
-        Kp          = prefs.getFloat("kp", Kp)
-        Ki          = prefs.getFloat("ki", Ki)
-        Kd          = prefs.getFloat("kd", Kd)
+        prefs           = getSharedPreferences("autopilot_prefs", Context.MODE_PRIVATE)
+        Kp              = prefs.getFloat("kp",       Kp)
+        Ki              = prefs.getFloat("ki",       Ki)
+        Kd              = prefs.getFloat("kd",       Kd)
         baseDeadbandDeg = prefs.getFloat("deadband", baseDeadbandDeg)
-        deadbandDeg = baseDeadbandDeg
+        deadbandDeg     = baseDeadbandDeg
 
         binding.tvApDeviceName.text = deviceName
 
         setupBleManager(device)
         setupGps()
+
+        // gpsManager is now initialized — safe to apply fusion prefs
+        gpsManager.fusion.useKalman = prefs.getBoolean("useKalman", false)
 
         // Apply GPS source preference
         if (intent.hasExtra(EXTRA_PREFER_PHONE_GPS)) {
@@ -688,7 +691,8 @@ class AutopilotActivity : AppCompatActivity() {
         binding.switchKalman.isChecked = gpsManager.fusion.useKalman
         binding.switchKalman.setOnCheckedChangeListener { _, checked ->
             gpsManager.fusion.useKalman = checked
-            gpsManager.fusion.resetFilter()   // reset both filters on switch
+            gpsManager.fusion.resetFilter()
+            saveGains()   // persist immediately
             showToast(if (checked) "Filter: Kalman" else "Filter: Complementary")
         }
 
@@ -733,10 +737,11 @@ class AutopilotActivity : AppCompatActivity() {
 
     private fun saveGains() {
         prefs.edit()
-            .putFloat("kp", Kp)
-            .putFloat("ki", Ki)
-            .putFloat("kd", Kd)
+            .putFloat("kp",       Kp)
+            .putFloat("ki",       Ki)
+            .putFloat("kd",       Kd)
             .putFloat("deadband", baseDeadbandDeg)
+            .putBoolean("useKalman", gpsManager.fusion.useKalman)
             .apply()
     }
 

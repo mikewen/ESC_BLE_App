@@ -754,9 +754,11 @@ class SensorFusion {
         // ── NEW: Speed Factor to reduce Mag weight when GPS COG is reliable ──
         val speedKt = state.speedKnots
         val speedFactor = when {
-            speedKt < 3.0f -> 1.0f                  // Below 3kt: Normal Mag weight
+            //speedKt < 3.0f -> 1.0f                  // Below 3kt: Normal Mag weight
+            speedKt < 2.0f -> 1.0f
             speedKt > 5.0f -> 0.1f                  // Above 5kt: Minimal Mag weight (Trust Gyro+GPS)
-            else -> 1.0f - ((speedKt - 3.0f) / 2.0f) * 0.9f // Ramp down between 3kt and 5kt
+            //else -> 1.0f - ((speedKt - 3.0f) / 2.0f) * 0.9f // Ramp down between 3kt and 5kt
+            else -> 1.0f - ((speedKt - 2.0f) / 2.0f) * 0.9f // Ramp down between 3kt and 5kt
         }
         //val magWeight = (magBase * tiltFactor * gnssFactor).coerceIn(0.02f, 0.35f)
         // Apply speed factor to final weight
@@ -1028,33 +1030,37 @@ class SensorFusion {
         cachedRmcHeading = cogDeg
         cachedRmcValid   = hasFix && speedKt >= 0.5f
 
-        // ── Update heading from RMC COG ──────────────────────────────
-        if (cachedRmcValid) {
-            val dt = if (lastGnssTimeMs > 0L)
-                ((nowMs - lastGnssTimeMs) / 1000f).coerceIn(0.01f, 2f)
-            else 1f
-            lastGnssTimeMs = nowMs
+        // Always update time reference — avoids stale dt when next valid A3 arrives
+        val dt = if (lastGnssTimeMs > 0L)
+            ((nowMs - lastGnssTimeMs) / 1000f).coerceIn(0.01f, 5f)
+        else 1f
+        lastGnssTimeMs = nowMs
 
-            val fusedHeading = if (useKalman) {
+        // ── Update heading from RMC COG (when moving fast enough for reliable COG) ──
+        // A3 (0.2Hz) is the only GNSS update when A2 (PQTMTAR) is absent.
+        // Without this, the filter is driven by mag+gyro only — which drifts in gusts.
+        val fusedHeading: Float?
+        val confA3: Float
+        if (cachedRmcValid) {
+            val sigmaGps   = (2.5f / (speedKt + 0.5f)).coerceIn(0.3f, 6f)
+            val yawPenalty = 1f + abs(lastGyroZDegS) / 25f
+
+            fusedHeading = if (useKalman) {
                 if (!kalman.initialised) kalman.init(cogDeg)
                 kalman.predict(lastGyroZDegS, dt)
-                // GPS noise: lower at higher speed, clamp between 1° and 10°
-                val rGps = ((10f / (speedKt + 0.5f)).coerceIn(1f, 10f)).let { it * it }
+                val rGps = sigmaGps * sigmaGps * yawPenalty
                 kalman.update(cogDeg, rGps)
                 kalman.theta
             } else {
-                val weight = (0.05f + (speedKt / 50f)).coerceIn(0.05f, 0.2f)
+                val weight = (0.02f + max(speedKt - 0.5f, 0f) * 0.18f)
+                    .div(yawPenalty).coerceIn(0.02f, 0.70f)
                 applyFilter(cogDeg, lastGyroZDegS, weight, dt)
             }
-
-            state = state.copy(
-                headingDeg  = fusedHeading,
-                hasHeading  = true,
-                headingConf = (speedKt / 6f).coerceIn(0.05f, 0.9f),
-                source      = if (useKalman) "kf:gnss+imu (A3)" else "cf:gnss+imu (A3)",
-                debugMsg    = state.debugMsg + " | A3 ${if(useKalman)"KF" else "CF"} update"
-            )
-            onFusedHeading?.invoke(state)
+            // Confidence: higher speed = better COG; penalised during fast turns
+            confA3 = (speedKt / 6f / yawPenalty).coerceIn(0.05f, 0.9f)
+        } else {
+            fusedHeading = null
+            confA3 = state.headingConf
         }
 
         // Update magnetic declination from GPS position (recomputes only when moved >0.5°)
@@ -1062,13 +1068,16 @@ class SensorFusion {
             updateDeclination(latDeg, lonDeg)
         }
 
-        // #2: use raw PQTMTAR heading (cached before misalignment correction in processA2)
-        //     COG vs raw TAR gives the true physical mounting offset
+        // LC02H mounting misalignment calibration vs COG
         if (speedKt >= TAR_MISALIGN_SPEED_KT) {
             updateTarMisalignment(cogDeg, lastRawTarHeadingDeg, speedKt, state.seaState)
         }
 
+        // Single state.copy — merges heading update (if any) and position update
         state = state.copy(
+            headingDeg            = fusedHeading ?: state.headingDeg,
+            hasHeading            = if (fusedHeading != null) true else state.hasHeading,
+            headingConf           = if (fusedHeading != null) confA3 else state.headingConf,
             latDeg                = latDeg,
             lonDeg                = lonDeg,
             speedKnots            = speedKt,
@@ -1076,8 +1085,10 @@ class SensorFusion {
             magDeclinationDeg     = magDeclinationDeg,
             tarMisalignDeg        = tarMisalignEstimate,
             tarMisalignCalibrated = tarMisalignCalibrated,
-            source                = state.source,
-            debugMsg              = "A3: lat=${"%.6f".format(latDeg)} lon=${"%.6f".format(lonDeg)} spd=${"%.2f".format(speedKt)}kt cog=${"%.1f".format(cogDeg)} decl=${"%.1f".format(magDeclinationDeg)}°${if (tarMisalignCalibrated) " misalign=${"%.1f".format(tarMisalignEstimate)}°" else ""}"
+            source                = if (fusedHeading != null)
+                if (useKalman) "kf:gnss+imu (A3)" else "cf:gnss+imu (A3)"
+            else state.source,
+            debugMsg              = "A3: lat=${"%.6f".format(latDeg)} lon=${"%.6f".format(lonDeg)} spd=${"%.2f".format(speedKt)}kt cog=${"%.1f".format(cogDeg)} decl=${"%.1f".format(magDeclinationDeg)}°${if (fusedHeading != null) " hdg=${"%.1f".format(fusedHeading)} conf=${"%.2f".format(confA3)}" else " (no hdg update)"}${if (tarMisalignCalibrated) " misalign=${"%.1f".format(tarMisalignEstimate)}°" else ""}"
         )
         onFusedHeading?.invoke(state)
     }
