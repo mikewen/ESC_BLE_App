@@ -133,21 +133,22 @@
                         <LinearLayout android:layout_width="match_parent"
                             android:layout_height="wrap_content" android:orientation="horizontal"
                             android:gravity="center_vertical" android:layout_marginTop="4dp">
-                            <TextView android:id="@+id/tvGpsSource"
+                            <!-- Single GPS source toggle — shows current state, tap to switch -->
+                            <TextView android:id="@+id/btnGpsSource"
                                 android:layout_width="wrap_content" android:layout_height="wrap_content"
-                                android:text="📱" android:textColor="#44AABBCC"
-                                android:textSize="12sp"/>
-                            <TextView android:id="@+id/tvGpsSats"
+                                android:text="📡 BLE GPS" android:textSize="12sp" android:textStyle="bold"
+                                android:textColor="#14FFEC" android:fontFamily="monospace"
+                                android:background="@android:color/transparent"
+                                android:paddingHorizontal="4dp" android:paddingVertical="6dp"/>
+                            <TextView android:id="@+id/tvGpsSource"
                                 android:layout_width="wrap_content" android:layout_height="wrap_content"
                                 android:text="" android:textColor="#44AABBCC"
                                 android:textSize="11sp" android:fontFamily="monospace"
                                 android:layout_marginStart="4dp"/>
-                            <TextView android:id="@+id/btnGpsSource"
+                            <TextView android:id="@+id/tvGpsSats"
                                 android:layout_width="wrap_content" android:layout_height="wrap_content"
-                                android:text="BLE" android:textSize="13sp" android:textStyle="bold"
-                                android:textColor="#0D7377" android:fontFamily="monospace"
-                                android:background="@android:color/transparent"
-                                android:paddingHorizontal="10dp" android:paddingVertical="6dp"
+                                android:text="" android:textColor="#44AABBCC"
+                                android:textSize="11sp" android:fontFamily="monospace"
                                 android:layout_marginStart="4dp"/>
                             <TextView android:id="@+id/btnGpsLog"
                                 android:layout_width="wrap_content" android:layout_height="wrap_content"

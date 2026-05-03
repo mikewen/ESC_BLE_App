@@ -183,15 +183,22 @@ class GpsManager(private val context: Context) {
 
     // ── Source preference ─────────────────────────────────────────────────────
 
-    var usePhoneGps = true
-        private set
+    //var usePhoneGps = true private set
+    var usePhoneGps: Boolean = true
+    fun setPreferBleGps()   = updateGpsSourcePref(false)
+    fun setPreferPhoneGps() = updateGpsSourcePref(true)
 
-    fun setPreferBleGps()   { usePhoneGps = false }
-    fun setPreferPhoneGps() { usePhoneGps = true  }
+    private fun updateGpsSourcePref(preferPhone: Boolean) {
+        if (usePhoneGps != preferPhone) {
+            usePhoneGps = preferPhone
+            context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
+                .edit().putBoolean("gps_phone", preferPhone).apply()
+        }
+    }
+
     fun getCurrentData()    = currentData
 
     // ── Fusion callback wiring ────────────────────────────────────────────────
-
     init {
         fusion.onFusedHeading = { fs ->
             // Only accept BLE update if BLE is preferred or phone has no fix
@@ -221,6 +228,8 @@ class GpsManager(private val context: Context) {
                 onUpdate?.invoke(currentData)
             }
         }
+        val appPrefs = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
+        usePhoneGps = appPrefs.getBoolean("gps_phone", true)
     }
 
     // ── Phone GPS ─────────────────────────────────────────────────────────────

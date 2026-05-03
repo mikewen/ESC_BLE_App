@@ -1085,9 +1085,11 @@ class SensorFusion {
             magDeclinationDeg     = magDeclinationDeg,
             tarMisalignDeg        = tarMisalignEstimate,
             tarMisalignCalibrated = tarMisalignCalibrated,
-            source                = if (fusedHeading != null)
-                if (useKalman) "kf:gnss+imu (A3)" else "cf:gnss+imu (A3)"
-            else state.source,
+            source = when {
+                fusedHeading != null -> if (useKalman) "kf:gnss+imu (A3)" else "cf:gnss+imu (A3)"
+                hasFix               -> if (useKalman) "kf:gnss (A3)" else "cf:gnss (A3)" // Position fix active, heading pending
+                else                 -> state.source
+            },
             debugMsg              = "A3: lat=${"%.6f".format(latDeg)} lon=${"%.6f".format(lonDeg)} spd=${"%.2f".format(speedKt)}kt cog=${"%.1f".format(cogDeg)} decl=${"%.1f".format(magDeclinationDeg)}°${if (fusedHeading != null) " hdg=${"%.1f".format(fusedHeading)} conf=${"%.2f".format(confA3)}" else " (no hdg update)"}${if (tarMisalignCalibrated) " misalign=${"%.1f".format(tarMisalignEstimate)}°" else ""}"
         )
         onFusedHeading?.invoke(state)

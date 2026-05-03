@@ -184,7 +184,9 @@ class AutopilotActivity : AppCompatActivity() {
         // Apply GPS source preference
         if (intent.hasExtra(EXTRA_PREFER_PHONE_GPS)) {
             if (intent.getBooleanExtra(EXTRA_PREFER_PHONE_GPS, true))
-                gpsManager.setPreferPhoneGps() else gpsManager.setPreferBleGps()
+                gpsManager.setPreferPhoneGps()
+            else
+                gpsManager.setPreferBleGps()
         }
 
         setupCourseButtons()
@@ -328,8 +330,19 @@ class AutopilotActivity : AppCompatActivity() {
         val misalLabel   = if (fusionState.tarMisalignCalibrated)
             " ⊾${"%.1f".format(fusionState.tarMisalignDeg)}°" else ""
         val seaLabel  = "sea:${"%.0f".format(seaState * 100)}%"
-        binding.tvApSpeed.text = "%.1f kt  c:%d%%%s%s%s  %s".format(
-            data.speedKnots, confPct, fixLabel, calLabel, misalLabel, seaLabel)
+
+        // GPS source label: shows which heading source is active
+        val srcLabel = when {
+            fusionState.source.contains("A3")        -> "📡A3 "
+            fusionState.source.contains("gnss")      -> "📡A2 "
+            fusionState.source.contains("imu+mag")   -> "🧭Mag "
+            fusionState.source.contains("nmea")      -> "📱Phone "
+            data.source == GpsManager.Source.PHONE   -> "📱Phone " // Fallback only
+            else                                     -> "— "
+        }
+
+        binding.tvApSpeed.text = "%.1f kt  c:%d%%%s%s%s  %s  %s".format(
+            data.speedKnots, confPct, fixLabel, calLabel, misalLabel, seaLabel, srcLabel)
 
         if (hasWaypoint && data.latDeg != 0.0) {
             targetHeading = bearingTo(data.latDeg, data.lonDeg, targetLat, targetLon)

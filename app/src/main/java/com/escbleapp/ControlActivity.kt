@@ -549,18 +549,17 @@ class ControlActivity : AppCompatActivity() {
         }
 
         binding.btnGpsSource.setOnClickListener {
-            // This is confusing to user
-            val preferBle = binding.btnGpsSource.text == "BLE"
-            if (preferBle) {
+            if (gpsManager.usePhoneGps) {
+                // Switch to BLE GPS
                 gpsManager.setPreferBleGps()
-                binding.btnGpsSource.text = "📱"
-                showToast("Preferring BLE GPS module")
+                showToast("GPS: BLE module")
             } else {
+                // Switch to Phone GPS
                 gpsManager.setPreferPhoneGps()
-                binding.btnGpsSource.text = "BLE"
-                showToast("Using phone GPS")
                 requestPhoneGps()
+                showToast("GPS: Phone")
             }
+            updateGpsSourceButton()
         }
 
         binding.btnGpsLog.setOnClickListener {
@@ -587,18 +586,27 @@ class ControlActivity : AppCompatActivity() {
             showToast("Trip reset")
         }
 
-        // Apply GPS source preference BEFORE starting GPS
+        // Apply GPS source preference from MainActivity
         val preferPhone = intent.getBooleanExtra(EXTRA_PREFER_PHONE_GPS, false)
         if (preferPhone) {
             gpsManager.setPreferPhoneGps()
-            binding.btnGpsSource.text = "BLE"    // button shows what you'd switch TO
             requestPhoneGps()
         } else {
             gpsManager.setPreferBleGps()
-            binding.btnGpsSource.text = "📱"     // button shows what you'd switch TO
-            // Start phone GPS in background for location permission / declination only
-            // GpsManager will ignore phone position updates when usePhoneGps=false
+            // Start phone GPS silently for permissions / declination updates
             if (gpsManager.hasLocationPermission()) gpsManager.startPhoneGps()
+        }
+        updateGpsSourceButton()
+    }
+
+    /** Update btnGpsSource to always show the CURRENT active preference clearly. */
+    private fun updateGpsSourceButton() {
+        if (gpsManager.usePhoneGps) {
+            binding.btnGpsSource.text = "📱 Phone GPS"
+            binding.btnGpsSource.setTextColor(android.graphics.Color.parseColor("#FFB300"))
+        } else {
+            binding.btnGpsSource.text = "📡 BLE GPS"
+            binding.btnGpsSource.setTextColor(android.graphics.Color.parseColor("#14FFEC"))
         }
     }
 
