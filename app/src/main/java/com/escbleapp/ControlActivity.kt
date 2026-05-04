@@ -39,7 +39,8 @@ class ControlActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityControlBinding
     private lateinit var bleManager: AC6328BleManager
-    private var remoteBle: RemoteBleManager? = null   // optional BLE remote controller
+    private var remoteBle: no.nordicsemi.android.ble.BleManager? = null
+
     private val handler = Handler(Looper.getMainLooper())
 
     private var escMode = true
@@ -678,11 +679,35 @@ class ControlActivity : AppCompatActivity() {
 
     @SuppressLint("SetTextI18n")
     private fun connectRemote(device: BluetoothDevice) {
-        remoteBle = RemoteBleManager(this)
-        remoteBle!!.onConnected    = { runOnUiThread { binding.tvRemoteStatus.text = "🕹 ${device.name ?: "Remote"}" } }
-        remoteBle!!.onDisconnected = { runOnUiThread { binding.tvRemoteStatus.text = "" } }
-        remoteBle!!.onRemoteCommand = { cmd -> runOnUiThread { handleRemoteCommand(cmd) } }
-        remoteBle!!.connectToDevice(device)
+        val name = device.name ?: ""
+        val isLookbon = LookbonRemote.REMOTE_NAME_FILTERS.any { name.contains(it, true) }
+
+        if (isLookbon) {
+            val lookbon = LookbonRemote(this)
+            lookbon.onRemoteCommand = { cmd -> runOnUiThread { handleRemoteCommand(cmd) } }
+            lookbon.onConnected = { runOnUiThread { binding.tvRemoteStatus.text = "🕹 $name (LB)" } }
+            lookbon.onDisconnected = { runOnUiThread { binding.tvRemoteStatus.text = "" } }
+
+            // Optional: Handle manual override specific to Lookbon
+            lookbon.onManualOverride = { isActive ->
+                runOnUiThread {
+                    if (isActive) {
+                        showToast("Manual Override Active")
+                        // maybe dim some UI or change colors
+                    }
+                }
+            }
+
+            remoteBle = lookbon
+            lookbon.connectToDevice(device)
+        } else {
+            val standard = RemoteBleManager(this)
+            standard.onRemoteCommand = { cmd -> runOnUiThread { handleRemoteCommand(cmd) } }
+            standard.onConnected = { runOnUiThread { binding.tvRemoteStatus.text = "🕹 $name" } }
+            standard.onDisconnected = { runOnUiThread { binding.tvRemoteStatus.text = "" } }
+            remoteBle = standard
+            standard.connectToDevice(device)
+        }
     }
 
     @SuppressLint("SetTextI18n")

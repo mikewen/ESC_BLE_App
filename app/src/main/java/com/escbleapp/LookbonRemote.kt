@@ -9,161 +9,161 @@ import android.os.Looper
 import android.util.Log
 import no.nordicsemi.android.ble.BleManager
 import no.nordicsemi.android.ble.observer.ConnectionObserver
+import java.util.UUID
 
 /**
- * LOOKBON BLE Remote — joystick + 7 buttons.
+ * LOOKBON BLE Remote — AC6329C device on ae30/ae02.
+ *
+ * ── Protocol ─────────────────────────────────────────────────────────────────
+ * Same ae30 service / ae02 characteristic as the motor controller.
+ * Key packets are 1–2 raw bytes; Python keymap uses notify_data.hex().upper():
+ *   Single byte 0xA1 → hex string "A1" → @ click
+ *   Two bytes 0x44 0x33 → hex string "D3" → joystick left
+ *
+ * SENSOR DATA (0xA1/0xA2/0xA3 sensor packets, ≥17 bytes) are silently ignored —
+ * they share the same characteristic but are routed to SensorFusion by GpsManager.
+ *
+ * ── Key map (notify_data.hex().upper()) ──────────────────────────────────────
+ *   A1=@ click    B1=@ long-press    C1=@ long-press-release
+ *   A2=A click    B2=A long-press    C2=A long-press-release   (thumb RIGHT)
+ *   A3=B click    B3=B long-press    C3=B long-press-release   (thumb LEFT)
+ *   A4=C click    B4=C long-press    C4=C long-press-release   (thumb UP)
+ *   A5=D click    B5=D long-press    C5=D long-press-release   (thumb DOWN)
+ *   A6=R click    B6=R long-press    C6=R long-press-release   (NEAR trigger)
+ *   A7=L click    B7=L long-press    C7=L long-press-release   (FAR trigger)
+ *   D0=joy none   D1=up  D2=down  D3=left  D4=right
+ *   D5=up-left    D6=down-left  D7=up-right  D8=down-right
  *
  * ── Physical layout ──────────────────────────────────────────────────────────
- *   Thumb buttons (face):
- *     @  = top/center button   (index: 1)
- *     B  = thumb LEFT          (index: 3)
- *     A  = thumb RIGHT         (index: 2)
- *     C  = thumb UP            (index: 4)
- *     D  = thumb DOWN          (index: 5)
- *   Trigger buttons (under joystick):
- *     R  = NEAR trigger (closer to palm, index finger) (index: 6)
- *     L  = FAR  trigger (further from palm)            (index: 7)
- *   Joystick: D0=none D1=up D2=down D3=left D4=right
- *             D5=up-left D6=down-left D7=up-right D8=down-right
+ *   @ = top center button
+ *   B = thumb LEFT,  A = thumb RIGHT,  C = thumb UP,  D = thumb DOWN
+ *   R = NEAR trigger (index finger, closer to palm)
+ *   L = FAR  trigger (index finger, further from palm)
  *
- * ── Raw packet format (2-byte hex string via GATT NOTIFY) ────────────────────
- *   Byte 0 = event type:  A=click  B=long-press  C=long-press-release
- *   Byte 1 = button index: 1–7 for buttons, or 'D' prefix for joystick
- *   E.g.  "A2" = A-button click,  "B6" = R-button long-press,  "D3" = joystick left
+ * ── Command mapping ──────────────────────────────────────────────────────────
+ *  AUTOPILOT MODE:
+ *   @ click          → ENGAGE / DISENGAGE toggle
+ *   @ long-press     → STOP
+ *   L + R + @ click  → Emergency STOP
+ *   B click          → Course −1°
+ *   A click          → Course +1°
+ *   R + B            → Course −10°
+ *   R + A            → Course +10°
+ *   C click          → Speed +1%
+ *   D click          → Speed −1%
+ *   R + C            → Speed +5%
+ *   R + D            → Speed −5%
+ *   L hold           → Manual Override mode
  *
- * ── Modifier state ───────────────────────────────────────────────────────────
- *   R held (B6 → C6): Coarse Adjust modifier — ×10 steps
- *   L held (B7 → C7): Manual Override mode
- *   L+R+@ held then @-click: Emergency STOP
- *
- * ── Mapping → RemoteCommand ──────────────────────────────────────────────────
- *
- *  AUTOPILOT MODE (default):
- *   @  click                          → AP ENGAGE / DISENGAGE (toggle)
- *   @  long-press 1.5s (B1 fired)     → STOP
- *   L + R + @ click                   → STOP (emergency)
- *   B  click                          → Course −1°
- *   A  click                          → Course +1°
- *   R + B click                       → Course −10°
- *   R + A click                       → Course +10°
- *   C  click                          → Speed +1%
- *   D  click                          → Speed −1%
- *   R + C click                       → Speed +5%
- *   R + D click                       → Speed −5%
- *   L  hold start (B7)                → Manual Override active
- *   L  release (C7)                   → Return to AP
- *
- *  MANUAL OVERRIDE MODE (while L held):
- *   B  click  → PORT −5  STBD +5   (turn port)
- *   A  click  → PORT +5  STBD −5   (turn stbd)
- *   C  click  → both +5
- *   D  click  → both −5
- *   Joystick left/right → differential ±1 per tick (auto-repeat while held)
- *   Joystick up/down    → both ±1 per tick (auto-repeat while held)
- *   L release → return AP mode
- *
- *  MANUAL OVERRIDE — emitted as RemoteCommand pairs (PORT, then STBD).
- *  Consumer calls handleRemoteCommand() twice — once for each.
+ *  MANUAL OVERRIDE (while L held):
+ *   B / A click      → differential turn port / stbd (±5%)
+ *   C / D click      → both motors ±5%
+ *   Joystick ←→     → differential ±1% (auto-repeat)
+ *   Joystick ↑↓     → both ±1% (auto-repeat)
+ *   L release        → return to AP mode
  */
 class LookbonRemote(context: Context) : BleManager(context) {
 
     companion object {
         private const val TAG = "LookbonRemote"
 
+        // ae30 service / ae02 characteristic — same as motor controller
+        val SERVICE_UUID = UUID.fromString("0000ae30-0000-1000-8000-00805f9b34fb")
+        val CHAR_UUID    = UUID.fromString("0000ae02-0000-1000-8000-00805f9b34fb")
+
         val REMOTE_NAME_FILTERS = listOf("LOOKBON", "lookbon")
 
-        /** Joystick auto-repeat interval ms */
         const val JOY_REPEAT_MS = 200L
+
+        // Sensor packet headers — packets starting with these bytes AND ≥17 bytes
+        // are AC6329C sensor data, not key events. Skip them.
+        private val SENSOR_HEADERS = setOf(0xA1.toByte(), 0xA2.toByte(), 0xA3.toByte())
     }
 
     // ── Callbacks ─────────────────────────────────────────────────────────────
-    /** Single command callback — same type as existing remote for drop-in compatibility. */
-    var onRemoteCommand: ((RemoteBleManager.RemoteCommand) -> Unit)? = null
-    var onConnected:     (() -> Unit)?                               = null
-    var onDisconnected:  (() -> Unit)?                               = null
-    /** Called when manual override starts (L held) or ends (L released). */
-    var onManualOverride: ((Boolean) -> Unit)?                       = null
+    var onRemoteCommand:  ((RemoteBleManager.RemoteCommand) -> Unit)? = null
+    var onConnected:      (() -> Unit)?          = null
+    var onDisconnected:   (() -> Unit)?          = null
+    var onManualOverride: ((Boolean) -> Unit)?   = null
 
     // ── State ─────────────────────────────────────────────────────────────────
-    private var rHeld = false        // R (near trigger) held
-    private var lHeld = false        // L (far trigger) held — manual override
-    private var apEngaged = false    // track AP state so @ can toggle
-
+    private var rHeld     = false
+    private var lHeld     = false
+    private var apEngaged = false
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    // Joystick auto-repeat
     private var joyRepeatRunnable: Runnable? = null
-    private var lastJoyDir = 0   // 0=none, 1=up, 2=down, 3=left, 4=right
 
     // ── GATT ─────────────────────────────────────────────────────────────────
-    // We don't know the LOOKBON service/characteristic UUIDs, so we scan
-    // every service and subscribe to every characteristic that supports NOTIFY.
-    // All notifications are routed to handleRawPacket() regardless of UUID.
+    private var notifyChar: BluetoothGattCharacteristic? = null
 
-    private val notifyChars = mutableListOf<BluetoothGattCharacteristic>()
+    override fun getGattCallback(): BleManagerGattCallback = GattCb()
 
-    override fun getGattCallback(): BleManagerGattCallback = LookbonGattCallback()
-
-    private inner class LookbonGattCallback : BleManagerGattCallback() {
-
+    private inner class GattCb : BleManagerGattCallback() {
         override fun isRequiredServiceSupported(gatt: BluetoothGatt): Boolean {
-            // Accept any device — collect all notify-capable characteristics
-            notifyChars.clear()
-            for (svc in gatt.services) {
-                for (char in svc.characteristics) {
-                    val props = char.properties
-                    if (props and BluetoothGattCharacteristic.PROPERTY_NOTIFY != 0 ||
-                        props and BluetoothGattCharacteristic.PROPERTY_INDICATE != 0) {
-                        notifyChars.add(char)
-                        Log.d(TAG, "Found notify char: ${char.uuid} in svc: ${svc.uuid}")
-                    }
-                }
+            val svc = gatt.getService(SERVICE_UUID) ?: run {
+                Log.w(TAG, "ae30 service not found — available: ${gatt.services.map { it.uuid }}")
+                return false
             }
-            // Connect as long as there is at least one notify characteristic
-            return notifyChars.isNotEmpty()
+            notifyChar = svc.getCharacteristic(CHAR_UUID) ?: run {
+                Log.w(TAG, "ae02 char not found in ae30 service")
+                return false
+            }
+            Log.i(TAG, "Found ae30/ae02 for LOOKBON")
+            return true
         }
 
         override fun initialize() {
-            // Subscribe to every notify characteristic found
-            for (c in notifyChars) {
+            notifyChar?.let { c ->
                 setNotificationCallback(c).with { _, data ->
                     val raw = data.value ?: return@with
-                    val str = raw.decodeToString().trim().uppercase()
-                    Log.d(TAG, "Notify [${c.uuid}]: $str  hex=${raw.joinToString("") { "%02X".format(it) }}")
-                    handleRawPacket(str)
+                    // Skip sensor data packets (≥17 bytes starting with A1/A2/A3)
+                    if (raw.size >= 17 && raw[0] in SENSOR_HEADERS) return@with
+                    // Convert raw bytes to hex string — matches Python's notify_data.hex().upper()
+                    val hex = raw.joinToString("") { "%02X".format(it) }
+                    Log.d(TAG, "Key packet: $hex  (${raw.size} bytes)")
+                    handleHex(hex)
                 }
                 enableNotifications(c).enqueue()
+                Log.i(TAG, "LOOKBON notifications enabled on ae02")
             }
-            Log.i(TAG, "Subscribed to ${notifyChars.size} notify characteristics")
         }
 
-        override fun onServicesInvalidated() { notifyChars.clear() }
+        override fun onServicesInvalidated() { notifyChar = null }
     }
 
     // ── Packet parsing ────────────────────────────────────────────────────────
 
-    private fun handleRawPacket(raw: String) {
-        // Joystick: D0–D8
-        if (raw.startsWith("D") && raw.length >= 2) {
-            val dir = raw[1].digitToIntOrNull() ?: return
-            handleJoystick(dir)
-            return
-        }
-        // Button: [A|B|C][1-7]
-        if (raw.length >= 2) {
-            val event  = raw[0]   // A=click  B=long-press  C=long-press-release
-            val btnNum = raw[1].digitToIntOrNull() ?: return
-            handleButton(event, btnNum)
+    private fun handleHex(hex: String) {
+        when {
+            // 2-char = single byte key event or joystick
+            hex.length == 2 -> {
+                val eventByte = hex[0]   // A/B/C or D
+                val btnChar   = hex[1]   // 1-7 or 0-8
+                when (eventByte) {
+                    'D' -> handleJoystick(btnChar.digitToIntOrNull() ?: return)
+                    'A', 'B', 'C' -> handleButton(eventByte,
+                        btnChar.digitToIntOrNull() ?: return)
+                }
+            }
+            // 4-char = 2-byte joystick (e.g. "D3" stored as 0x44 0x33)
+            hex.length == 4 -> {
+                val s = String(byteArrayOf(
+                    hex.substring(0,2).toInt(16).toByte(),
+                    hex.substring(2,4).toInt(16).toByte()
+                ))
+                if (s[0] == 'D') handleJoystick(s[1].digitToIntOrNull() ?: return)
+            }
         }
     }
 
     private fun handleButton(event: Char, btn: Int) {
         when {
-            // ── R modifier (near trigger) ─────────────────────────────────────
+            // ── R modifier ───────────────────────────────────────────────────
             event == 'B' && btn == 6 -> { rHeld = true;  return }
             event == 'C' && btn == 6 -> { rHeld = false; return }
 
-            // ── L modifier (far trigger) — Manual Override ────────────────────
+            // ── L modifier — Manual Override ─────────────────────────────────
             event == 'B' && btn == 7 -> {
                 lHeld = true
                 mainHandler.post { onManualOverride?.invoke(true) }
@@ -177,62 +177,53 @@ class LookbonRemote(context: Context) : BleManager(context) {
             }
 
             // ── @ button ─────────────────────────────────────────────────────
-            event == 'A' && btn == 1 -> {
-                when {
-                    lHeld && rHeld -> emit(stopCmd())           // L+R+@ = Emergency STOP
-                    else           -> emit(toggleApCmd())       // @ click = toggle AP
-                }
+            event == 'A' && btn == 1 -> when {
+                lHeld && rHeld -> emit(stopCmd())
+                else           -> emit(toggleApCmd())
             }
-            event == 'B' && btn == 1 -> emit(stopCmd())        // @ long-press = STOP
+            event == 'B' && btn == 1 -> emit(stopCmd())   // long-press = STOP
 
-            // ── Thumb buttons (mode-dependent) ───────────────────────────────
-            event == 'A' && btn == 3 -> {   // B = thumb left
-                if (lHeld) emit(manualTurn(-5))
+            // ── Thumb buttons ─────────────────────────────────────────────────
+            event == 'A' && btn == 3 -> {  // B = thumb left
+                if (lHeld) emit(manualTurnCmd(-5))
                 else       emit(courseCmd(if (rHeld) -10f else -1f))
             }
-            event == 'A' && btn == 2 -> {   // A = thumb right
-                if (lHeld) emit(manualTurn(+5))
+            event == 'A' && btn == 2 -> {  // A = thumb right
+                if (lHeld) emit(manualTurnCmd(+5))
                 else       emit(courseCmd(if (rHeld) +10f else +1f))
             }
-            event == 'A' && btn == 4 -> {   // C = thumb up
+            event == 'A' && btn == 4 -> {  // C = thumb up
                 if (lHeld) emit(speedBothCmd(+5))
                 else       emit(speedBothCmd(if (rHeld) +5 else +1))
             }
-            event == 'A' && btn == 5 -> {   // D = thumb down
+            event == 'A' && btn == 5 -> {  // D = thumb down
                 if (lHeld) emit(speedBothCmd(-5))
                 else       emit(speedBothCmd(if (rHeld) -5 else -1))
             }
         }
     }
 
-    // ── Joystick (Manual Override only while L held) ──────────────────────────
+    // ── Joystick ──────────────────────────────────────────────────────────────
 
     private fun handleJoystick(dir: Int) {
         stopJoyRepeat()
-        if (dir == 0) return          // D0 = released
+        if (dir == 0) return
 
-        // Only active in manual override (L held) and autopilot course nudge otherwise
         val cmd = when (dir) {
-            1    -> if (lHeld) speedBothCmd(+1)   else null   // up
-            2    -> if (lHeld) speedBothCmd(-1)   else null   // down
-            3    -> if (lHeld) manualTurn(-1)     else courseCmd(-1f)   // left
-            4    -> if (lHeld) manualTurn(+1)     else courseCmd(+1f)   // right
-            5    -> if (lHeld) manualTurn(-1)     else null   // up-left → turn left
-            6    -> if (lHeld) manualTurn(-1)     else null   // down-left
-            7    -> if (lHeld) manualTurn(+1)     else null   // up-right → turn right
-            8    -> if (lHeld) manualTurn(+1)     else null   // down-right
+            1 -> if (lHeld) speedBothCmd(+1)  else null          // up
+            2 -> if (lHeld) speedBothCmd(-1)  else null          // down
+            3 -> if (lHeld) manualTurnCmd(-1) else courseCmd(-1f)// left
+            4 -> if (lHeld) manualTurnCmd(+1) else courseCmd(+1f)// right
+            5 -> if (lHeld) manualTurnCmd(-1) else null          // up-left
+            6 -> if (lHeld) manualTurnCmd(-1) else null          // down-left
+            7 -> if (lHeld) manualTurnCmd(+1) else null          // up-right
+            8 -> if (lHeld) manualTurnCmd(+1) else null          // down-right
             else -> null
         } ?: return
 
-        lastJoyDir = dir
         emit(cmd)
-
-        // Auto-repeat while held
         joyRepeatRunnable = object : Runnable {
-            override fun run() {
-                emit(cmd)
-                mainHandler.postDelayed(this, JOY_REPEAT_MS)
-            }
+            override fun run() { emit(cmd); mainHandler.postDelayed(this, JOY_REPEAT_MS) }
         }
         mainHandler.postDelayed(joyRepeatRunnable!!, JOY_REPEAT_MS)
     }
@@ -240,7 +231,6 @@ class LookbonRemote(context: Context) : BleManager(context) {
     private fun stopJoyRepeat() {
         joyRepeatRunnable?.let { mainHandler.removeCallbacks(it) }
         joyRepeatRunnable = null
-        lastJoyDir = 0
     }
 
     // ── Command factories ─────────────────────────────────────────────────────
@@ -256,35 +246,25 @@ class LookbonRemote(context: Context) : BleManager(context) {
     private fun stopCmd() = RemoteBleManager.RemoteCommand(
         RemoteBleManager.GRP_SPEED, RemoteBleManager.SPD_STOP)
 
-    private fun courseCmd(delta: Float): RemoteBleManager.RemoteCommand {
-        val value = when (delta) {
+    private fun courseCmd(delta: Float) = RemoteBleManager.RemoteCommand(
+        RemoteBleManager.GRP_COURSE, when (delta) {
             -10f -> RemoteBleManager.CRS_LEFT_10
             +10f -> RemoteBleManager.CRS_RIGHT_10
             -1f  -> RemoteBleManager.CRS_LEFT_1
             else -> RemoteBleManager.CRS_RIGHT_1
-        }
-        return RemoteBleManager.RemoteCommand(RemoteBleManager.GRP_COURSE, value)
-    }
+        })
 
-    private fun speedBothCmd(step: Int): RemoteBleManager.RemoteCommand {
-        val v = when {
+    private fun speedBothCmd(step: Int) = RemoteBleManager.RemoteCommand(
+        RemoteBleManager.GRP_SPEED, when {
             step >= 5  -> RemoteBleManager.SPD_UP
             step <= -5 -> RemoteBleManager.SPD_DOWN
             step > 0   -> RemoteBleManager.SPD_UP_1
             else       -> RemoteBleManager.SPD_DOWN_1
-        }
-        return RemoteBleManager.RemoteCommand(RemoteBleManager.GRP_SPEED, v)
-    }
+        })
 
-    /**
-     * Manual turn: positive = turn starboard (PORT faster, STBD slower).
-     * Emits PORT command; STBD is the mirror (handled in ControlActivity
-     * by the existing per-motor handler when sync is off).
-     */
-    private fun manualTurn(step: Int): RemoteBleManager.RemoteCommand {
-        val v = if (step > 0) RemoteBleManager.MOT_UP else RemoteBleManager.MOT_DOWN
-        return RemoteBleManager.RemoteCommand(RemoteBleManager.GRP_PORT, v)
-    }
+    private fun manualTurnCmd(step: Int) = RemoteBleManager.RemoteCommand(
+        RemoteBleManager.GRP_COURSE, if (step > 0) RemoteBleManager.CRS_RIGHT_1
+        else           RemoteBleManager.CRS_LEFT_1)
 
     private fun emit(cmd: RemoteBleManager.RemoteCommand) {
         mainHandler.post { onRemoteCommand?.invoke(cmd) }
@@ -300,23 +280,17 @@ class LookbonRemote(context: Context) : BleManager(context) {
             override fun onDeviceDisconnecting(d: BluetoothDevice) = Unit
             override fun onDeviceReady(d: BluetoothDevice)         = Unit
             override fun onDeviceConnected(d: BluetoothDevice) {
-                Log.i(TAG, "Lookbon connected")
-                mainHandler.post { onConnected?.invoke() }
+                Log.i(TAG, "LOOKBON connected"); mainHandler.post { onConnected?.invoke() }
             }
             override fun onDeviceFailedToConnect(d: BluetoothDevice, reason: Int) {
-                Log.w(TAG, "Lookbon failed: $reason")
-                mainHandler.post { onDisconnected?.invoke() }
+                Log.w(TAG, "LOOKBON failed: $reason"); mainHandler.post { onDisconnected?.invoke() }
             }
             override fun onDeviceDisconnected(d: BluetoothDevice, reason: Int) {
-                Log.i(TAG, "Lookbon disconnected")
-                mainHandler.post { onDisconnected?.invoke() }
+                Log.i(TAG, "LOOKBON disconnected"); mainHandler.post { onDisconnected?.invoke() }
             }
         })
         connect(device).useAutoConnect(false).enqueue()
     }
 
-    override fun close() {
-        stopJoyRepeat()
-        super.close()
-    }
+    override fun close() { stopJoyRepeat(); super.close() }
 }

@@ -547,15 +547,15 @@ class SensorFusion {
 
         // ── Noise tuning (all in degrees or deg/s) ──────────────────────────
         /** Gyro measurement noise: how much gz jitter in °/s. Default 0.5. */
-        var sigmaGyro:  Float = 0.5f
+        var sigmaGyro:  Float = 0.8f
         /** Gyro bias random-walk noise per second. Default 0.005. */
-        var sigmaDrift: Float = 0.005f
+        var sigmaDrift: Float = 0.02f
         /**
          * Base mag measurement noise in degrees. Default 15°.
          * Raise if heading jumps when tilting. Lower if mag is very stable.
          * Effective R_mag = sigmaMag² × tiltPenalty × seaPenalty.
          */
-        var sigmaMag:   Float = 15f
+        var sigmaMag:   Float = 4f
         /** Base GPS measurement noise in degrees. Default 2°. */
         //var sigmaGps:   Float = 2f
 
@@ -770,9 +770,8 @@ class SensorFusion {
         if (useKalman) {
             if (!kalman.initialised) kalman.init(magHeading)
             kalman.predict(gyroZDegS, dtS)
-            val rMag = kalman.sigmaMag * kalman.sigmaMag *
-                    (1f + (1f - tiltFactor) * 2f) *
-                    (1f + seaState)
+            //val rMag = kalman.sigmaMag * kalman.sigmaMag * (1f + (1f - tiltFactor) * 2f) * (1f - seaState)
+            val rMag = kalman.sigmaMag * kalman.sigmaMag * (1f + (1f - tiltFactor) * 0.5f) * (1f + seaState * 0.3f)
             kalman.update(magHeading, rMag)
             fused = kalman.theta
             filterLabel = "KF mag R=${"%.1f".format(rMag)} b=${"%.3f".format(kalman.bias)}"

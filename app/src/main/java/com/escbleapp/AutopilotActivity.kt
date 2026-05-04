@@ -48,7 +48,7 @@ class AutopilotActivity : AppCompatActivity() {
     private lateinit var binding: ActivityAutopilotBinding
     private lateinit var bleManager: AC6328BleManager
     private lateinit var gpsManager: GpsManager
-    private var remoteBle: RemoteBleManager? = null
+    private var remoteBle: no.nordicsemi.android.ble.BleManager? = null
     private val apLogger = AutopilotLogger()
     private val handler = Handler(Looper.getMainLooper())
 
@@ -333,12 +333,13 @@ class AutopilotActivity : AppCompatActivity() {
 
         // GPS source label: shows which heading source is active
         val srcLabel = when {
-            fusionState.source.contains("A3")        -> "📡A3 "
-            fusionState.source.contains("gnss")      -> "📡A2 "
-            fusionState.source.contains("imu+mag")   -> "🧭Mag "
-            fusionState.source.contains("nmea")      -> "📱Phone "
-            data.source == GpsManager.Source.PHONE   -> "📱Phone " // Fallback only
-            else                                     -> "— "
+            fusionState.source.contains("A3") && fusionState.source.contains("gnss+imu") -> "📡A3"
+            fusionState.source.contains("A3")          -> "📡A3⚓"  // position fix, no heading (stationary)
+            fusionState.source.contains("gnss")        -> "📡A2"
+            fusionState.source.contains("imu+mag")     -> "🧭Mag"
+            fusionState.source.contains("nmea")        -> "📱Phone"
+            data.source == GpsManager.Source.PHONE     -> "📱Phone"
+            else                                       -> "—"
         }
 
         binding.tvApSpeed.text = "%.1f kt  c:%d%%%s%s%s  %s  %s".format(
@@ -785,16 +786,23 @@ class AutopilotActivity : AppCompatActivity() {
 
     @SuppressLint("SetTextI18n")
     private fun connectRemote(device: BluetoothDevice) {
-        remoteBle = RemoteBleManager(this)
-        remoteBle!!.onConnected    = { runOnUiThread {
-            binding.tvRemoteStatus.text = "🕹 ${device.name ?: "Remote"}"
-        }}
-        remoteBle!!.onDisconnected = { runOnUiThread {
-            binding.tvRemoteStatus.text = ""
-        }}
-        remoteBle!!.onRemoteCommand = { cmd -> runOnUiThread { handleRemoteCommand(cmd) } }
-        remoteBle!!.connectToDevice(device)
+        val name = device.name ?: ""
+        val isLookbon = LookbonRemote.REMOTE_NAME_FILTERS.any { name.contains(it, true) }
+
+        if (isLookbon) {
+            val lb = LookbonRemote(this)
+            lb.onRemoteCommand = { cmd -> runOnUiThread { handleRemoteCommand(cmd) } }
+            lb.onConnected = { /* ... */ }
+            remoteBle = lb
+            lb.connectToDevice(device)
+        } else {
+            val standard = RemoteBleManager(this)
+            standard.onRemoteCommand = { cmd -> runOnUiThread { handleRemoteCommand(cmd) } }
+            remoteBle = standard
+            standard.connectToDevice(device)
+        }
     }
+
 
     @SuppressLint("SetTextI18n")
     private fun handleRemoteCommand(cmd: RemoteBleManager.RemoteCommand) {

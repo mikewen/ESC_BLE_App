@@ -175,12 +175,17 @@ class MainActivity : AppCompatActivity() {
         val cb = object : android.bluetooth.le.ScanCallback() {
             override fun onScanResult(callbackType: Int, result: android.bluetooth.le.ScanResult) {
                 val name = result.device.name ?: return
-                val match = RemoteBleManager.REMOTE_NAME_FILTERS.any { name.contains(it, true) }
-                if (match) {
+
+                // Match either standard remote or Lookbon remote names
+                val isStandardMatch = RemoteBleManager.REMOTE_NAME_FILTERS.any { name.contains(it, true) }
+                val isLookbonMatch = LookbonRemote.REMOTE_NAME_FILTERS.any { name.contains(it, true) }
+
+                if (isStandardMatch || isLookbonMatch) {
                     stopRemoteScan()
                     remoteDevice = result.device
                     runOnUiThread { updateRemoteButton() }
-                    Toast.makeText(this@MainActivity, "Remote found: $name", Toast.LENGTH_SHORT).show()
+                    val type = if (isLookbonMatch) "Lookbon Remote" else "Remote"
+                    Toast.makeText(this@MainActivity, "$type found: $name", Toast.LENGTH_SHORT).show()
                 }
             }
         }

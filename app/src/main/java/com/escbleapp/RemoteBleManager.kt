@@ -85,7 +85,7 @@ class RemoteBleManager(context: Context) : BleManager(context) {
         const val SPEED_STEP    = 5               // % per UP/DOWN press
         const val SPEED_STEP_1  = 1               // % per UP_1/DOWN_1 press
 
-        val REMOTE_NAME_FILTERS = listOf("ESC_REMOTE", "REMOTE", "RC_CTRL", "BLE_RC")
+        val REMOTE_NAME_FILTERS = listOf("ESC_REMOTE", "LOOKBON")
     }
 
     // ── Command data class ────────────────────────────────────────────────────
