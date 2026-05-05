@@ -549,13 +549,13 @@ class SensorFusion {
         /** Gyro measurement noise: how much gz jitter in °/s. Default 0.5. */
         var sigmaGyro:  Float = 0.8f
         /** Gyro bias random-walk noise per second. Default 0.005. */
-        var sigmaDrift: Float = 0.02f
+        var sigmaDrift: Float = 0.08f
         /**
          * Base mag measurement noise in degrees. Default 15°.
          * Raise if heading jumps when tilting. Lower if mag is very stable.
          * Effective R_mag = sigmaMag² × tiltPenalty × seaPenalty.
          */
-        var sigmaMag:   Float = 4f
+        var sigmaMag:   Float = 3.5f
         /** Base GPS measurement noise in degrees. Default 2°. */
         //var sigmaGps:   Float = 2f
 
@@ -717,8 +717,10 @@ class SensorFusion {
             var delta = magHeadingRaw - prevMagHeading
             while (delta >  180f) delta -= 360f
             while (delta < -180f) delta += 360f
-            val maxAllowedDelta = abs(gyroZDegS) * dtS * magSpikeMultiplier + 2f  // +2° floor for noise
-            if (abs(delta) > maxAllowedDelta && abs(delta) > 5f) {
+            //val maxAllowedDelta = abs(gyroZDegS) * dtS * magSpikeMultiplier + 2f  // +2° floor for noise
+            val maxAllowedDelta = abs(gyroZDegS) * dtS * magSpikeMultiplier + 20f  // disable magSpikeRejected
+            //if (abs(delta) > maxAllowedDelta && abs(delta) > 5f) {
+            if (false) {
                 // Spike — reject this reading
                 magSpikeCount++
                 magHeading       = prevMagHeading   // hold last good value

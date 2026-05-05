@@ -50,6 +50,7 @@ class AutopilotActivity : AppCompatActivity() {
     private lateinit var gpsManager: GpsManager
     private var remoteBle: no.nordicsemi.android.ble.BleManager? = null
     private val apLogger = AutopilotLogger()
+    private var voice: VoicePrompt? = null
     private val handler = Handler(Looper.getMainLooper())
 
     // ── Mode ──────────────────────────────────────────────────────────────────
@@ -87,7 +88,7 @@ class AutopilotActivity : AppCompatActivity() {
     private lateinit var prefs: SharedPreferences
 
     // ── Timing ────────────────────────────────────────────────────────────────
-    private val CONTROL_INTERVAL_MS = 20L    // 50 Hz control loop
+    private val CONTROL_INTERVAL_MS = 100L    // 10 Hz control loop
     private val HOLD_INTERVAL_MS    = 100L   // speed ramp tick
     private var isConnected         = false
 
@@ -150,6 +151,7 @@ class AutopilotActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityAutopilotBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        voice = VoicePrompt(this)
 
         val device: BluetoothDevice = if (android.os.Build.VERSION.SDK_INT >= 33) {
             intent.getParcelableExtra(EXTRA_DEVICE, BluetoothDevice::class.java)!!
@@ -228,6 +230,7 @@ class AutopilotActivity : AppCompatActivity() {
         bleManager.close()
         remoteBle?.disconnect()?.enqueue()
         remoteBle?.close()
+        if (voice != null) voice?.shutdown()
     }
 
     // ── BLE ───────────────────────────────────────────────────────────────────
@@ -525,6 +528,8 @@ class AutopilotActivity : AppCompatActivity() {
             android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#14FFEC"))
         binding.btnEngage.setTextColor(android.graphics.Color.parseColor("#0A1628"))
         vibrate(80)
+        voice?.resetThrottle()
+        voice?.speakCritical("Engaged, course %03d".format(targetHeading.toInt()))
         handler.post(controlRunnable)
 
         // Start autopilot log — logs CTRL+CMD rows each tick, SENS from GpsManager
@@ -544,6 +549,7 @@ class AutopilotActivity : AppCompatActivity() {
         binding.btnEngage.setTextColor(android.graphics.Color.parseColor("#14FFEC"))
         if (isConnected) bleManager.stopMotors()
         updateMotorDisplay(0, 0, 0f)
+        voice?.speak("Disengaged")
 
         gpsManager.autopilotLogger = null
         apLogger.stop()
@@ -807,45 +813,59 @@ class AutopilotActivity : AppCompatActivity() {
     @SuppressLint("SetTextI18n")
     private fun handleRemoteCommand(cmd: RemoteBleManager.RemoteCommand) {
         when {
-            cmd.isEngage     -> { engage();    showToast("Remote: ENGAGE") }
-            cmd.isDisengage  -> { disengage(); showToast("Remote: DISENGAGE") }
+            cmd.isEngage -> {
+                engage()
+                // voice already called inside engage()
+            }
+            cmd.isDisengage -> {
+                disengage()
+                // voice already called inside disengage()
+            }
             cmd.isHoldCourse -> {
                 if (hasHeading) {
                     targetHeading = actualHeading
                     updateCourseDisplay()
                     showToast("Remote: HOLD ${targetHeading.toInt()}°")
+                    voice?.speak("Holding %03d".format(targetHeading.toInt()))
                 }
             }
             cmd.isStop -> {
                 disengage()
                 if (isConnected) bleManager.stopMotors()
                 showToast("Remote: STOP")
+                voice?.speakCritical("Stop")   // speakCritical — never drop this
             }
             cmd.isSpeedUp -> {
                 baseSpeedPct = (baseSpeedPct + RemoteBleManager.SPEED_STEP).coerceAtMost(100)
                 updateSpeedDisplay()
+                voice?.speakSpeed(baseSpeedPct)
             }
             cmd.isSpeedDown -> {
                 baseSpeedPct = (baseSpeedPct - RemoteBleManager.SPEED_STEP).coerceAtLeast(0)
                 updateSpeedDisplay()
                 if (baseSpeedPct == 0 && isConnected) bleManager.stopMotors()
+                voice?.speakSpeed(baseSpeedPct)
             }
-            cmd.isSpeedUp1   -> {
+            cmd.isSpeedUp1 -> {
                 baseSpeedPct = (baseSpeedPct + RemoteBleManager.SPEED_STEP_1).coerceAtMost(100)
                 updateSpeedDisplay()
+                voice?.speakSpeed(baseSpeedPct)   // throttled — only speaks every 5%
             }
             cmd.isSpeedDown1 -> {
                 baseSpeedPct = (baseSpeedPct - RemoteBleManager.SPEED_STEP_1).coerceAtLeast(0)
                 updateSpeedDisplay()
                 if (baseSpeedPct == 0 && isConnected) bleManager.stopMotors()
+                voice?.speakSpeed(baseSpeedPct)
             }
             cmd.isSetBothSpeed -> {
                 baseSpeedPct = cmd.bothSpeedPct
                 updateSpeedDisplay()
+                voice?.speakSpeed(baseSpeedPct)
             }
             cmd.isCourse -> {
                 targetHeading = ((targetHeading + cmd.courseDelta) + 360f) % 360f
                 updateCourseDisplay()
+                voice?.speakCourse(targetHeading)  // throttled — only speaks every 5°
             }
         }
     }

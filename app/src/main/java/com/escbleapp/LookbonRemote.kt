@@ -264,7 +264,7 @@ class LookbonRemote(context: Context) : BleManager(context) {
 
     private fun manualTurnCmd(step: Int) = RemoteBleManager.RemoteCommand(
         RemoteBleManager.GRP_COURSE, if (step > 0) RemoteBleManager.CRS_RIGHT_1
-        else           RemoteBleManager.CRS_LEFT_1)
+                                     else           RemoteBleManager.CRS_LEFT_1)
 
     private fun emit(cmd: RemoteBleManager.RemoteCommand) {
         mainHandler.post { onRemoteCommand?.invoke(cmd) }
