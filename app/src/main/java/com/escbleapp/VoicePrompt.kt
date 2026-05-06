@@ -1,44 +1,41 @@
 package com.escbleapp
 
 import android.content.Context
-import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.speech.tts.TextToSpeech
-import android.speech.tts.UtteranceProgressListener
 import android.util.Log
 import java.util.Locale
 
 /**
  * Lightweight TTS wrapper for autopilot voice feedback.
  *
- * Design:
- *  - INTERRUPT mode by default — new speech cancels queued speech.
- *    You don't want "course minus one" stacked 5 times from joystick repeat.
- *  - QUEUE mode for critical alerts (stop, engage) so they never get dropped.
- *  - Throttling for repetitive commands (course/speed) — only speaks when
- *    the announced value changes by at least [minDeltaToSpeak].
- *  - All speech is non-blocking — fire and forget.
- *
- * Usage:
- *   val voice = VoicePrompt(context)
- *   voice.speak("Engaged")            // interrupts any current speech
- *   voice.speakCritical("Stop")       // queued, never interrupted
- *   voice.speakCourse(targetHeading)  // throttled — only when heading changes ≥5°
- *   voice.speakSpeed(baseSpeedPct)    // throttled — only when speed changes ≥5%
- *   voice.shutdown()                  // call from onDestroy
+ * Key design decisions:
+ *  - Course/speed use a DEBOUNCE delay (300ms) so rapid joystick presses
+ *    only speak the final value, not every intermediate step.
+ *  - Critical alerts (engage, stop) speak immediately with no debounce.
+ *  - Numbers are spoken naturally: 35 → "35", not "035".
+ *  - Compass direction is appended to course: "Course 35, north-east".
+ *  - QUEUE_FLUSH only for critical (stop/engage) — debounced commands use
+ *    QUEUE_ADD after cancelling pending debounce, so the last value always
+ *    finishes speaking.
  */
 class VoicePrompt(context: Context) {
 
     companion object {
         private const val TAG = "VoicePrompt"
-
-        // Minimum heading change (degrees) before re-announcing course
-        const val MIN_COURSE_DELTA = 5f
-        // Minimum speed change (%) before re-announcing speed
-        const val MIN_SPEED_DELTA  = 5
+        private const val DEBOUNCE_MS   = 350L   // wait this long after last press before speaking
+        const val MIN_COURSE_DELTA      = 1f      // degrees — suppress if change < this
+        const val MIN_SPEED_DELTA       = 1       // percent — suppress if change < this
     }
 
     private var tts: TextToSpeech? = null
     private var ready = false
+    private val handler = Handler(Looper.getMainLooper())
+
+    // Debounce runnables
+    private var courseRunnable: Runnable? = null
+    private var speedRunnable:  Runnable? = null
 
     // Last announced values for throttling
     private var lastAnnouncedCourse = Float.NaN
@@ -47,14 +44,10 @@ class VoicePrompt(context: Context) {
     init {
         tts = TextToSpeech(context) { status ->
             if (status == TextToSpeech.SUCCESS) {
-                val result = tts?.setLanguage(Locale.US)
-                if (result == TextToSpeech.LANG_MISSING_DATA ||
-                    result == TextToSpeech.LANG_NOT_SUPPORTED) {
-                    Log.w(TAG, "TTS language not supported — trying default")
+                val res = tts?.setLanguage(Locale.US)
+                if (res == TextToSpeech.LANG_MISSING_DATA || res == TextToSpeech.LANG_NOT_SUPPORTED)
                     tts?.setLanguage(Locale.getDefault())
-                }
-                tts?.setSpeechRate(1.1f)   // slightly faster for marine use
-                tts?.setPitch(1.0f)
+                tts?.setSpeechRate(1.1f)
                 ready = true
                 Log.i(TAG, "TTS ready")
             } else {
@@ -64,63 +57,101 @@ class VoicePrompt(context: Context) {
     }
 
     /**
-     * Speak immediately, interrupting any current speech.
-     * Use for most autopilot feedback.
+     * Speak immediately with QUEUE_FLUSH — interrupts everything.
+     * Use for critical one-shot alerts: Engage, Stop.
      */
     fun speak(text: String) {
         if (!ready) return
-        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "ap_${System.currentTimeMillis()}")
+        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "imm_${System.currentTimeMillis()}")
     }
 
     /**
-     * Speak without interrupting — queued after current speech.
-     * Use only for critical alerts that must not be dropped (STOP, ENGAGE).
+     * Speak AFTER current speech finishes — never interrupted.
+     * Use for alerts that must not be dropped (e.g. "Stop" confirmation).
      */
-    fun speakCritical(text: String) {
+    fun speakQueued(text: String) {
         if (!ready) return
-        tts?.speak(text, TextToSpeech.QUEUE_ADD, null, "critical_${System.currentTimeMillis()}")
+        tts?.speak(text, TextToSpeech.QUEUE_ADD, null, "q_${System.currentTimeMillis()}")
     }
 
     /**
-     * Announce current course — throttled to [MIN_COURSE_DELTA] degrees.
-     * Rounds to nearest 5° for cleaner speech ("course 035" not "course 034").
+     * Debounced course announcement — speaks DEBOUNCE_MS after the last call.
+     * Cancels any pending announcement so only the final value is spoken.
+     * Throttled: won't re-announce if change < MIN_COURSE_DELTA.
      */
     fun speakCourse(headingDeg: Float) {
         if (!ready) return
-        if (!lastAnnouncedCourse.isNaN() &&
-            angleDelta(headingDeg, lastAnnouncedCourse) < MIN_COURSE_DELTA) return
-        lastAnnouncedCourse = headingDeg
-        val rounded = ((headingDeg / 5f).toInt() * 5) % 360
-        speak("Course %03d".format(rounded))
+        // Cancel pending debounced announcement
+        courseRunnable?.let { handler.removeCallbacks(it) }
+        // Schedule new announcement
+        val runnable = Runnable {
+            if (!lastAnnouncedCourse.isNaN() &&
+                angleDelta(headingDeg, lastAnnouncedCourse) < MIN_COURSE_DELTA) return@Runnable
+            lastAnnouncedCourse = headingDeg
+            val deg = headingDeg.toInt() % 360
+            val dir = compassWord(deg)
+            // Speak naturally: "Course 35" or "Course 350" — no leading zeros
+            tts?.speak("Course $deg $dir", TextToSpeech.QUEUE_FLUSH, null,
+                "course_${System.currentTimeMillis()}")
+        }
+        courseRunnable = runnable
+        handler.postDelayed(runnable, DEBOUNCE_MS)
     }
 
     /**
-     * Announce current speed — throttled to [MIN_SPEED_DELTA] percent.
+     * Debounced speed announcement — speaks DEBOUNCE_MS after the last call.
+     * Throttled: won't re-announce if change < MIN_SPEED_DELTA.
      */
     fun speakSpeed(speedPct: Int) {
         if (!ready) return
-        if (lastAnnouncedSpeed != Int.MIN_VALUE &&
-            Math.abs(speedPct - lastAnnouncedSpeed) < MIN_SPEED_DELTA) return
-        lastAnnouncedSpeed = speedPct
-        speak("Speed $speedPct")
+        speedRunnable?.let { handler.removeCallbacks(it) }
+        val runnable = Runnable {
+            if (lastAnnouncedSpeed != Int.MIN_VALUE &&
+                Math.abs(speedPct - lastAnnouncedSpeed) < MIN_SPEED_DELTA) return@Runnable
+            lastAnnouncedSpeed = speedPct
+            val text = if (speedPct == 0) "Stop" else "Speed $speedPct"
+            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null,
+                "speed_${System.currentTimeMillis()}")
+        }
+        speedRunnable = runnable
+        handler.postDelayed(runnable, DEBOUNCE_MS)
     }
 
-    /** Reset throttle so next course/speed will always be announced. */
+    /** Reset throttle — next course/speed will always be announced. */
     fun resetThrottle() {
+        courseRunnable?.let { handler.removeCallbacks(it) }
+        speedRunnable?.let  { handler.removeCallbacks(it) }
+        courseRunnable = null; speedRunnable = null
         lastAnnouncedCourse = Float.NaN
         lastAnnouncedSpeed  = Int.MIN_VALUE
     }
 
     fun shutdown() {
+        resetThrottle()
         tts?.stop()
         tts?.shutdown()
         tts = null
         ready = false
     }
 
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
     private fun angleDelta(a: Float, b: Float): Float {
         var d = Math.abs(a - b) % 360f
         if (d > 180f) d = 360f - d
         return d
+    }
+
+    /** Short compass direction word for the given heading. */
+    private fun compassWord(deg: Int): String = when (((deg + 22) / 45) % 8) {
+        0 -> "north"
+        1 -> "north east"
+        2 -> "east"
+        3 -> "south east"
+        4 -> "south"
+        5 -> "south west"
+        6 -> "west"
+        7 -> "north west"
+        else -> ""
     }
 }

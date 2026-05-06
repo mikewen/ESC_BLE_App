@@ -529,7 +529,7 @@ class AutopilotActivity : AppCompatActivity() {
         binding.btnEngage.setTextColor(android.graphics.Color.parseColor("#0A1628"))
         vibrate(80)
         voice?.resetThrottle()
-        voice?.speakCritical("Engaged, course %03d".format(targetHeading.toInt()))
+        voice?.speakQueued("Engaged, course %03d".format(targetHeading.toInt()))
         handler.post(controlRunnable)
 
         // Start autopilot log — logs CTRL+CMD rows each tick, SENS from GpsManager
@@ -797,6 +797,7 @@ class AutopilotActivity : AppCompatActivity() {
 
         if (isLookbon) {
             val lb = LookbonRemote(this)
+            lb.controlMode = LookbonRemote.ControlMode.AUTOPILOT
             lb.onRemoteCommand = { cmd -> runOnUiThread { handleRemoteCommand(cmd) } }
             lb.onConnected = { /* ... */ }
             remoteBle = lb
@@ -833,7 +834,7 @@ class AutopilotActivity : AppCompatActivity() {
                 disengage()
                 if (isConnected) bleManager.stopMotors()
                 showToast("Remote: STOP")
-                voice?.speakCritical("Stop")   // speakCritical — never drop this
+                voice?.speakQueued("Stop")   // speakCritical — never drop this
             }
             cmd.isSpeedUp -> {
                 baseSpeedPct = (baseSpeedPct + RemoteBleManager.SPEED_STEP).coerceAtMost(100)

@@ -700,39 +700,9 @@ class SensorFusion {
             ((rawMagHeading + magBiasEstimate) + 360f) % 360f
         else rawMagHeading
 
-        // Apply magnetic declination → true north
-        val magHeadingRaw = ((magHeadingAfterBias + magDeclinationDeg) + 360f) % 360f
-
-        // ── Mag spike rejection ───────────────────────────────────────────────
-        // A genuine heading change can't exceed |gyroZ × dt × spikeMultiplier|.
-        // If it does, the magnetometer jumped — reject and reuse previous accepted value.
-        val magSpikeRejected: Boolean
-        val magHeading: Float
-        if (prevMagHeading.isNaN()) {
-            // First reading — accept unconditionally to seed the filter
-            prevMagHeading   = magHeadingRaw
-            magHeading       = magHeadingRaw
-            magSpikeRejected = false
-        } else {
-            var delta = magHeadingRaw - prevMagHeading
-            while (delta >  180f) delta -= 360f
-            while (delta < -180f) delta += 360f
-            //val maxAllowedDelta = abs(gyroZDegS) * dtS * magSpikeMultiplier + 2f  // +2° floor for noise
-            val maxAllowedDelta = abs(gyroZDegS) * dtS * magSpikeMultiplier + 20f  // disable magSpikeRejected
-            //if (abs(delta) > maxAllowedDelta && abs(delta) > 5f) {
-            if (false) {
-                // Spike — reject this reading
-                magSpikeCount++
-                magHeading       = prevMagHeading   // hold last good value
-                magSpikeRejected = true
-                Log.d("SensorFusion", "Mag spike rejected: delta=${"%.1f".format(delta)}° max=${"%.1f".format(maxAllowedDelta)}° (count=$magSpikeCount)")
-            } else {
-                prevMagHeading   = magHeadingRaw
-                magHeading       = magHeadingRaw
-                magSpikeRejected = false
-                magSpikeCount    = 0
-            }
-        }
+        // Apply magnetic declination (auto-computed from GPS position)
+        // Converts magnetic north to true north: true = magnetic + declination
+        val magHeading = ((magHeadingAfterBias + magDeclinationDeg) + 360f) % 360f
 
         // ── Tilt quality factor ───────────────────────────────────────────────
         val accelNorm  = sqrt((axEff * axEff + ayEff * ayEff + az * az).toFloat())
@@ -815,9 +785,8 @@ class SensorFusion {
             autoDeadbandDeg  = autoDeadband,
             magCalibrated    = magCalibrated,
             rawMagHeadingDeg = rawMagHeading,
-            magSpikeRejected = magSpikeRejected,
             source           = if (useKalman) "kf:imu+mag" else "cf:imu+mag",
-            debugMsg         = "A1: gz=${"%.2f".format(gyroZDegS)} mag=${"%.1f".format(magHeading)}${if (magSpikeRejected) "⚡SPIKE" else ""} tilt=${"%.1f".format(tiltDeg)} sea=${"%.2f".format(seaState)} db=${"%.1f".format(autoDeadband)}° conf=${"%.2f".format(state.headingConf)} $filterLabel → ${"%.1f".format(fused)}"
+            debugMsg         = "A1: gz=${"%.2f".format(gyroZDegS)} mag=${"%.1f".format(magHeading)} tilt=${"%.1f".format(tiltDeg)} sea=${"%.2f".format(seaState)} db=${"%.1f".format(autoDeadband)}° conf=${"%.2f".format(state.headingConf)} $filterLabel → ${"%.1f".format(fused)}"
         )
         onFusedHeading?.invoke(state)
     }

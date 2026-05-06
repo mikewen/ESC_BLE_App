@@ -40,6 +40,7 @@ class ControlActivity : AppCompatActivity() {
     private lateinit var binding: ActivityControlBinding
     private lateinit var bleManager: AC6328BleManager
     private var remoteBle: no.nordicsemi.android.ble.BleManager? = null
+    private var voice: VoicePrompt? = null
 
     private val handler = Handler(Looper.getMainLooper())
 
@@ -92,6 +93,7 @@ class ControlActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityControlBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        voice = VoicePrompt(this)
 
         val device: BluetoothDevice = if (android.os.Build.VERSION.SDK_INT >= 33) {
             intent.getParcelableExtra(EXTRA_DEVICE, BluetoothDevice::class.java)!!
@@ -143,6 +145,7 @@ class ControlActivity : AppCompatActivity() {
         bleManager.close()
         remoteBle?.disconnect()?.enqueue()
         remoteBle?.close()
+        voice?.shutdown()
     }
 
     // ── Mode helpers ──────────────────────────────────────────────────────────
@@ -684,6 +687,7 @@ class ControlActivity : AppCompatActivity() {
 
         if (isLookbon) {
             val lookbon = LookbonRemote(this)
+            lookbon.controlMode = LookbonRemote.ControlMode.DIRECT
             lookbon.onRemoteCommand = { cmd -> runOnUiThread { handleRemoteCommand(cmd) } }
             lookbon.onConnected = { runOnUiThread { binding.tvRemoteStatus.text = "🕹 $name (LB)" } }
             lookbon.onDisconnected = { runOnUiThread { binding.tvRemoteStatus.text = "" } }
@@ -721,81 +725,111 @@ class ControlActivity : AppCompatActivity() {
         else AC6328BleManager.BLDC_MAX * RemoteBleManager.SPEED_STEP_1 / 100
         val range = maxValue() - stopValue()
 
+        // Helper: convert raw duty value to 0-100% for voice
+        fun pct(v: Int) = ((v - stopValue()) * 100 / range.coerceAtLeast(1))
+
         when {
-            // Both motors
-            cmd.isStop        -> { stopAll(); showToast("Remote: STOP") }
-            cmd.isSpeedUp     -> {
+            cmd.isStop -> {
+                stopAll()
+                showToast("Remote: STOP")
+                voice?.speak("Stop")
+            }
+            cmd.isSpeedUp -> {
                 portVal = (portVal + step5).coerceAtMost(maxValue())
                 starboardVal = (starboardVal + step5).coerceAtMost(maxValue())
                 syncAllDisplays(); triggerSend()
+                voice?.speakSpeed(pct(portVal))
             }
-            cmd.isSpeedDown   -> {
+            cmd.isSpeedDown -> {
                 portVal = (portVal - step5).coerceAtLeast(stopValue())
                 starboardVal = (starboardVal - step5).coerceAtLeast(stopValue())
                 syncAllDisplays(); triggerSend()
+                voice?.speakSpeed(pct(portVal))
             }
-            cmd.isSpeedUp1    -> {
+            cmd.isSpeedUp1 -> {
                 portVal = (portVal + step1).coerceAtMost(maxValue())
                 starboardVal = (starboardVal + step1).coerceAtMost(maxValue())
                 syncAllDisplays(); triggerSend()
+                voice?.speakSpeed(pct(portVal))
             }
-            cmd.isSpeedDown1  -> {
+            cmd.isSpeedDown1 -> {
                 portVal = (portVal - step1).coerceAtLeast(stopValue())
                 starboardVal = (starboardVal - step1).coerceAtLeast(stopValue())
                 syncAllDisplays(); triggerSend()
+                voice?.speakSpeed(pct(portVal))
             }
             cmd.isSetBothSpeed -> {
                 portVal = stopValue() + range * cmd.bothSpeedPct / 100
                 starboardVal = portVal
                 syncAllDisplays(); triggerSend()
+                voice?.speakSpeed(pct(portVal))
             }
 
-            // Sync toggle
-            cmd.isSyncOn  -> { binding.switchSync.isChecked = true  }
-            cmd.isSyncOff -> { binding.switchSync.isChecked = false }
+            // Sync toggle — no voice needed
+            //cmd.isSyncOn  -> { binding.switchSync.isChecked = true  }
+            //cmd.isSyncOff -> { binding.switchSync.isChecked = false }
+            cmd.isSyncOn -> {
+                binding.switchSync.isChecked = true
+                voice?.speak("Sync on")
+            }
+
+            cmd.isSyncOff -> {
+                binding.switchSync.isChecked = false
+                voice?.speak("Sync off")
+            }
 
             // PORT motor
-            cmd.isPortCmd && cmd.isMotorUp       -> {
+            cmd.isPortCmd && cmd.isMotorUp -> {
                 portVal = (portVal + step5).coerceAtMost(maxValue())
                 refreshPort(); triggerSend()
+                voice?.speakSpeed(pct(portVal))
             }
-            cmd.isPortCmd && cmd.isMotorDown     -> {
+            cmd.isPortCmd && cmd.isMotorDown -> {
                 portVal = (portVal - step5).coerceAtLeast(stopValue())
                 refreshPort(); triggerSend()
+                voice?.speakSpeed(pct(portVal))
             }
-            cmd.isPortCmd && cmd.isMotorUp1      -> {
+            cmd.isPortCmd && cmd.isMotorUp1 -> {
                 portVal = (portVal + step1).coerceAtMost(maxValue())
                 refreshPort(); triggerSend()
+                voice?.speakSpeed(pct(portVal))
             }
-            cmd.isPortCmd && cmd.isMotorDown1    -> {
+            cmd.isPortCmd && cmd.isMotorDown1 -> {
                 portVal = (portVal - step1).coerceAtLeast(stopValue())
                 refreshPort(); triggerSend()
+                voice?.speakSpeed(pct(portVal))
             }
             cmd.isPortCmd && cmd.isMotorAbsolute -> {
                 portVal = stopValue() + range * cmd.motorAbsPct / 100
                 refreshPort(); triggerSend()
+                voice?.speakSpeed(pct(portVal))
             }
 
             // STBD motor
-            cmd.isStbdCmd && cmd.isMotorUp       -> {
+            cmd.isStbdCmd && cmd.isMotorUp -> {
                 starboardVal = (starboardVal + step5).coerceAtMost(maxValue())
                 refreshStbd(); triggerSend()
+                voice?.speakSpeed(pct(starboardVal))
             }
-            cmd.isStbdCmd && cmd.isMotorDown     -> {
+            cmd.isStbdCmd && cmd.isMotorDown -> {
                 starboardVal = (starboardVal - step5).coerceAtLeast(stopValue())
                 refreshStbd(); triggerSend()
+                voice?.speakSpeed(pct(starboardVal))
             }
-            cmd.isStbdCmd && cmd.isMotorUp1      -> {
+            cmd.isStbdCmd && cmd.isMotorUp1 -> {
                 starboardVal = (starboardVal + step1).coerceAtMost(maxValue())
                 refreshStbd(); triggerSend()
+                voice?.speakSpeed(pct(starboardVal))
             }
-            cmd.isStbdCmd && cmd.isMotorDown1    -> {
+            cmd.isStbdCmd && cmd.isMotorDown1 -> {
                 starboardVal = (starboardVal - step1).coerceAtLeast(stopValue())
                 refreshStbd(); triggerSend()
+                voice?.speakSpeed(pct(starboardVal))
             }
             cmd.isStbdCmd && cmd.isMotorAbsolute -> {
                 starboardVal = stopValue() + range * cmd.motorAbsPct / 100
                 refreshStbd(); triggerSend()
+                voice?.speakSpeed(pct(starboardVal))
             }
         }
     }

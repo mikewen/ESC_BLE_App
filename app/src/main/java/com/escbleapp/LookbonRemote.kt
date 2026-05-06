@@ -46,24 +46,35 @@ import java.util.UUID
  *   @ long-press     → STOP
  *   L + R + @ click  → Emergency STOP
  *   B click          → Course −1°
+ *   B long-press     → Course −1° (auto-repeat)
  *   A click          → Course +1°
- *   R + B            → Course −10°
- *   R + A            → Course +10°
+ *   A long-press     → Course +1° (auto-repeat)
+ *   R + B            → Course −10° (auto-repeat on hold)
+ *   R + A            → Course +10° (auto-repeat on hold)
  *   C click          → Speed +1%
+ *   C long-press     → Speed +1% (auto-repeat)
  *   D click          → Speed −1%
- *   R + C            → Speed +5%
- *   R + D            → Speed −5%
+ *   D long-press     → Speed −1% (auto-repeat)
+ *   R + C            → Speed +5% (auto-repeat on hold)
+ *   R + D            → Speed −5% (auto-repeat on hold)
  *   L hold           → Manual Override mode
  *
  *  MANUAL OVERRIDE (while L held):
  *   B / A click      → differential turn port / stbd (±5%)
- *   C / D click      → both motors ±5%
+ *   B / A long-press → differential turn port / stbd (±5%, auto-repeat)
+ *   C / D click/hold → both motors ±5% (auto-repeat)
  *   Joystick ←→     → differential ±1% (auto-repeat)
  *   Joystick ↑↓     → both ±1% (auto-repeat)
  *   L release        → return to AP mode
  */
 class LookbonRemote(context: Context) : BleManager(context) {
 
+    enum class ControlMode {
+        DIRECT,      // ControlActivity (motors)
+        AUTOPILOT    // AutopilotActivity (course/speed)
+    }
+
+    var controlMode = ControlMode.DIRECT
     companion object {
         private const val TAG = "LookbonRemote"
 
@@ -92,7 +103,7 @@ class LookbonRemote(context: Context) : BleManager(context) {
     private var apEngaged = false
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    private var joyRepeatRunnable: Runnable? = null
+    private var repeatRunnable: Runnable? = null
 
     // ── GATT ─────────────────────────────────────────────────────────────────
     private var notifyChar: BluetoothGattCharacteristic? = null
@@ -157,6 +168,7 @@ class LookbonRemote(context: Context) : BleManager(context) {
         }
     }
 
+    private var syncOn = false
     private fun handleButton(event: Char, btn: Int) {
         when {
             // ── R modifier ───────────────────────────────────────────────────
@@ -171,42 +183,145 @@ class LookbonRemote(context: Context) : BleManager(context) {
             }
             event == 'C' && btn == 7 -> {
                 lHeld = false
-                stopJoyRepeat()
+                stopRepeat()
                 mainHandler.post { onManualOverride?.invoke(false) }
                 return
             }
 
             // ── @ button ─────────────────────────────────────────────────────
-            event == 'A' && btn == 1 -> when {
-                lHeld && rHeld -> emit(stopCmd())
-                else           -> emit(toggleApCmd())
+            event == 'A' && btn == 1 -> {
+                when {
+                    lHeld && rHeld -> {
+                        emit(stopCmd())
+                    }
+
+                    controlMode == ControlMode.AUTOPILOT -> {
+                        emit(toggleApCmd())
+                    }
+
+                    controlMode == ControlMode.DIRECT -> {
+                        // Toggle Sync ON/OFF
+                        emit(
+                            RemoteBleManager.RemoteCommand(
+                                RemoteBleManager.GRP_SYNC,
+                                if (syncOn) RemoteBleManager.SYNC_OFF
+                                else        RemoteBleManager.SYNC_ON
+                            )
+                        )
+                        syncOn = !syncOn
+                    }
+                }
             }
             event == 'B' && btn == 1 -> emit(stopCmd())   // long-press = STOP
 
             // ── Thumb buttons ─────────────────────────────────────────────────
-            event == 'A' && btn == 3 -> {  // B = thumb left
-                if (lHeld) emit(manualTurnCmd(-5))
-                else       emit(courseCmd(if (rHeld) -10f else -1f))
+            // B = thumb left
+            event == 'A' && btn == 3 -> {
+                val cmd = when (controlMode) {
+                    ControlMode.DIRECT -> RemoteBleManager.RemoteCommand(
+                        RemoteBleManager.GRP_STBD,
+                        RemoteBleManager.SPD_UP_1
+                    )
+                    ControlMode.AUTOPILOT -> courseCmd(if (rHeld) -10f else -1f)
+                }
+                emit(cmd)
             }
-            event == 'A' && btn == 2 -> {  // A = thumb right
-                if (lHeld) emit(manualTurnCmd(+5))
-                else       emit(courseCmd(if (rHeld) +10f else +1f))
+
+            // B = thumb left hold
+            event == 'B' && btn == 3 -> {
+                val cmd = if (controlMode == ControlMode.DIRECT) {
+                    RemoteBleManager.RemoteCommand(
+                        RemoteBleManager.GRP_STBD,
+                        RemoteBleManager.SPD_UP_1
+                    )
+                } else {
+                    // AUTOPILOT
+                    if (lHeld)
+                        manualTurnCmd(-5)
+                    else
+                        courseCmd(if (rHeld) -10f else -1f)
+                }
+                startRepeat(cmd)
             }
-            event == 'A' && btn == 4 -> {  // C = thumb up
-                if (lHeld) emit(speedBothCmd(+5))
-                else       emit(speedBothCmd(if (rHeld) +5 else +1))
+
+            event == 'C' && btn == 3 -> stopRepeat()
+
+            // A = thumb right
+            event == 'A' && btn == 2 -> {
+                val cmd = when (controlMode) {
+                    ControlMode.DIRECT -> RemoteBleManager.RemoteCommand(
+                        RemoteBleManager.GRP_PORT,
+                        RemoteBleManager.SPD_UP_1
+                    )
+                    ControlMode.AUTOPILOT -> courseCmd(if (rHeld) +10f else +1f)
+                }
+                emit(cmd)
             }
-            event == 'A' && btn == 5 -> {  // D = thumb down
-                if (lHeld) emit(speedBothCmd(-5))
-                else       emit(speedBothCmd(if (rHeld) -5 else -1))
+
+            // B = thumb right hold
+            event == 'B' && btn == 2 -> {
+                val cmd = if (controlMode == ControlMode.DIRECT) {
+                    RemoteBleManager.RemoteCommand(
+                        RemoteBleManager.GRP_PORT,
+                        RemoteBleManager.SPD_UP_1
+                    )
+                } else {
+                    // AUTOPILOT
+                    if (lHeld)
+                        manualTurnCmd(+5)
+                    else
+                        courseCmd(if (rHeld) +10f else +1f)
+                }
+                startRepeat(cmd)
+            }
+
+            event == 'C' && btn == 2 -> stopRepeat()
+
+            // C = thumb up
+            event == 'A' && btn == 4 -> { // Click
+                emit(if (lHeld) speedBothCmd(+5) else speedBothCmd(if (rHeld) +5 else +1))
+            }
+            event == 'B' && btn == 4 -> { // Long press detected -> start repeat
+                val cmd = if (lHeld) speedBothCmd(+5) else speedBothCmd(if (rHeld) +5 else +1)
+                startRepeat(cmd)
+            }
+            event == 'C' && btn == 4 -> stopRepeat() // Release
+
+            // D = thumb down
+            event == 'A' && btn == 5 -> { // Click
+                emit(if (lHeld) speedBothCmd(-5) else speedBothCmd(if (rHeld) -5 else -1))
+            }
+            event == 'B' && btn == 5 -> { // Long press detected -> start repeat
+                val cmd = if (lHeld) speedBothCmd(-5) else speedBothCmd(if (rHeld) -5 else -1)
+                startRepeat(cmd)
+            }
+            event == 'C' && btn == 5 -> stopRepeat() // Release
+        }
+    }
+
+    // ── Repeat Logic ──────────────────────────────────────────────────────────
+
+    private fun startRepeat(cmd: RemoteBleManager.RemoteCommand) {
+        stopRepeat()
+        emit(cmd)
+        repeatRunnable = object : Runnable {
+            override fun run() {
+                emit(cmd)
+                mainHandler.postDelayed(this, JOY_REPEAT_MS)
             }
         }
+        mainHandler.postDelayed(repeatRunnable!!, JOY_REPEAT_MS)
+    }
+
+    private fun stopRepeat() {
+        repeatRunnable?.let { mainHandler.removeCallbacks(it) }
+        repeatRunnable = null
     }
 
     // ── Joystick ──────────────────────────────────────────────────────────────
 
     private fun handleJoystick(dir: Int) {
-        stopJoyRepeat()
+        stopRepeat()
         if (dir == 0) return
 
         val cmd = when (dir) {
@@ -221,16 +336,7 @@ class LookbonRemote(context: Context) : BleManager(context) {
             else -> null
         } ?: return
 
-        emit(cmd)
-        joyRepeatRunnable = object : Runnable {
-            override fun run() { emit(cmd); mainHandler.postDelayed(this, JOY_REPEAT_MS) }
-        }
-        mainHandler.postDelayed(joyRepeatRunnable!!, JOY_REPEAT_MS)
-    }
-
-    private fun stopJoyRepeat() {
-        joyRepeatRunnable?.let { mainHandler.removeCallbacks(it) }
-        joyRepeatRunnable = null
+        startRepeat(cmd)
     }
 
     // ── Command factories ─────────────────────────────────────────────────────
@@ -264,7 +370,7 @@ class LookbonRemote(context: Context) : BleManager(context) {
 
     private fun manualTurnCmd(step: Int) = RemoteBleManager.RemoteCommand(
         RemoteBleManager.GRP_COURSE, if (step > 0) RemoteBleManager.CRS_RIGHT_1
-                                     else           RemoteBleManager.CRS_LEFT_1)
+        else           RemoteBleManager.CRS_LEFT_1)
 
     private fun emit(cmd: RemoteBleManager.RemoteCommand) {
         mainHandler.post { onRemoteCommand?.invoke(cmd) }
@@ -286,11 +392,13 @@ class LookbonRemote(context: Context) : BleManager(context) {
                 Log.w(TAG, "LOOKBON failed: $reason"); mainHandler.post { onDisconnected?.invoke() }
             }
             override fun onDeviceDisconnected(d: BluetoothDevice, reason: Int) {
-                Log.i(TAG, "LOOKBON disconnected"); mainHandler.post { onDisconnected?.invoke() }
+                Log.i(TAG, "LOOKBON disconnected")
+                stopRepeat()
+                mainHandler.post { onDisconnected?.invoke() }
             }
         })
         connect(device).useAutoConnect(false).enqueue()
     }
 
-    override fun close() { stopJoyRepeat(); super.close() }
+    override fun close() { stopRepeat(); super.close() }
 }
