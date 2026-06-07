@@ -4,6 +4,8 @@ import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCharacteristic
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import no.nordicsemi.android.ble.BleManager
 import java.util.UUID
@@ -30,6 +32,8 @@ import java.util.UUID
  *
  * Packet format (ae03, 5 bytes):
  *   [CMD, portLo, portHi, stbdLo, stbdHi]  little-endian 16-bit values
+ * Heartbeat: This manager automatically re-sends the last motor command every 250ms
+ * to satisfy the firmware watchdog (500ms).
  */
 class AC6328BleManager(context: Context) : BleManager(context) {
 
@@ -60,6 +64,8 @@ class AC6328BleManager(context: Context) : BleManager(context) {
         const val BLDC_MIN     = 0
         const val BLDC_DEFAULT = 0
         const val BLDC_MAX     = 10000
+
+        private const val HEARTBEAT_INTERVAL_MS = 250L
     }
 
     // ── Characteristics ───────────────────────────────────────────────────────
@@ -67,6 +73,32 @@ class AC6328BleManager(context: Context) : BleManager(context) {
     private var charAe03: BluetoothGattCharacteristic? = null
     private var charAe02: BluetoothGattCharacteristic? = null
     private var charAe10: BluetoothGattCharacteristic? = null
+
+    // ── Heartbeat (feeds firmware watchdog) ───────────────────────────────────
+
+    private var lastMotorPacket: ByteArray? = null
+    private val heartbeatHandler = Handler(Looper.getMainLooper())
+    private val heartbeatRunnable = object : Runnable {
+        override fun run() {
+            if (isConnected) {
+                val pkt = lastMotorPacket ?: buildPacket(CMD_STOP, 0, 0)
+                charAe03?.let { c ->
+                    // Re-send last command to feed watchdog. NO_RESPONSE = fast.
+                    writeCharacteristic(c, pkt, BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE).enqueue()
+                }
+                heartbeatHandler.postDelayed(this, HEARTBEAT_INTERVAL_MS)
+            }
+        }
+    }
+
+    private fun startHeartbeat() {
+        heartbeatHandler.removeCallbacks(heartbeatRunnable)
+        heartbeatHandler.postDelayed(heartbeatRunnable, HEARTBEAT_INTERVAL_MS)
+    }
+
+    private fun stopHeartbeat() {
+        heartbeatHandler.removeCallbacks(heartbeatRunnable)
+    }
 
     // ── Callbacks ─────────────────────────────────────────────────────────────
 
@@ -106,9 +138,11 @@ class AC6328BleManager(context: Context) : BleManager(context) {
                 }
                 enableNotifications(c).enqueue()
             }
+            startHeartbeat()
         }
 
         override fun onServicesInvalidated() {
+            stopHeartbeat()
             charAe03 = null; charAe02 = null; charAe10 = null
         }
     }
@@ -181,6 +215,7 @@ class AC6328BleManager(context: Context) : BleManager(context) {
     )
 
     private fun writeCommand(bytes: ByteArray) {
+        lastMotorPacket = bytes
         charAe03?.let {
             writeCharacteristic(it, bytes, BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE).enqueue()
         }

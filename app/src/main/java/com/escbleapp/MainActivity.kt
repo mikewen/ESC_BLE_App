@@ -246,7 +246,7 @@ class MainActivity : AppCompatActivity() {
                 val name = result.device.name ?: return
                 // Same name filter as motor device scan — any AC6329C/GPS/IMU device
                 //val sensorNames = listOf("AC6329", "GPS_PWM", "IMU_PWM", "ESC_PWM", "BLDC_PWM")
-                val sensorNames = listOf("AC6328_IMU", "AC6329_IMU", "IMU_PWM")
+                val sensorNames = listOf("AC6328_IMU", "AC6329_IMU", "IMU_PWM", "IMU_GPS" )
                 val match = sensorNames.any { name.contains(it, true) }
                 // Don't pick up the same device twice (already in the motor device list)
                 if (match && devices.none { it.address == result.device.address }) {
